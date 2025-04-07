@@ -1,4 +1,4 @@
-module github.com/kamalesh-seervi/fossa-cli
+module github.com/kamalesh-seervi/fossa-nx
 
 go 1.23.0
 
