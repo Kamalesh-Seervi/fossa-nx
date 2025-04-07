@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kamalesh-seervi/fossa-cli/internal/git"
-	"github.com/kamalesh-seervi/fossa-cli/internal/mapping"
-	"github.com/kamalesh-seervi/fossa-cli/internal/nx"
+	"github.com/kamalesh-seervi/fossa-nx/internal/git"
+	"github.com/kamalesh-seervi/fossa-nx/internal/mapping"
+	"github.com/kamalesh-seervi/fossa-nx/internal/nx"
 )
 
 // Global mutex for filesystem operations to prevent race conditions
