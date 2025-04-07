@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kamalesh-seervi/fossa-cli/internal/fossa"
-	"github.com/kamalesh-seervi/fossa-cli/internal/nx"
+	"github.com/kamalesh-seervi/fossa-nx/internal/fossa"
+	"github.com/kamalesh-seervi/fossa-nx/internal/nx"
 	"github.com/spf13/cobra"
 )
 
