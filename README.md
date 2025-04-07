@@ -1,0 +1,318 @@
+# FOSSA-NX CLI
+
+A high-performance Go CLI tool for running FOSSA license scans on `NX monorepo projects.`
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Technical Architecture](#technical-architecture)
+- [Performance Optimization](#performance-optimization)
+- [Troubleshooting](#troubleshooting)
+
+## Overview
+
+FOSSA-NX CLI is a developer-friendly tool designed to simplify running FOSSA license analysis on projects in an NX monorepo. Key features include:
+
+- **Parallel Scanning**: Runs multiple FOSSA analyses simultaneously for dramatically faster results
+- **Affected Project Detection**: Scans only projects affected by your changes
+- **Full Repository Analysis**: Option to scan all projects in the monorepo
+- **Configurable**: Use YAML configuration files for project and team mappings
+- **Performance Optimized**: Advanced caching and concurrency management
+
+## Requirements
+
+- **Go 1.17+** (for building from source)
+- **FOSSA CLI** installed and authenticated (`fossa` command available in PATH)
+- **NX** monorepo structure
+- **Git** repository
+
+## Installation
+
+### Using Homebrew (This is Under Development NotDone)
+
+```bash
+brew tap Kamalesh-Seervi/fossa-nx https://github.com/Kamalesh-Seervi/fossa-nx
+brew install fossa-nx
+```
+
+### Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/Kamalesh-Seervi/fossa-nx.git
+cd fossa-nx
+
+# Build the binary
+go build -o fossa-nx cmd/fossa-nx/main.go
+
+# Move to a directory in your PATH (optional)
+sudo mv fossa-nx /usr/local/bin/
+```
+
+## Configuration
+
+fossa-nx uses YAML configuration files to map projects to FOSSA configurations.
+
+### Configuration File Location
+
+Create `fossa-config.yaml` in one of the following locations:
+- Current working directory (recommended)
+- Your home directory
+- A custom location specified with `--config` flag
+
+### Configuration File Format
+
+```yaml
+# FOSSA Project Configuration
+fossa:
+  # Project ID mappings
+  projects:
+    "@test/app1": "app1-ID"
+    "@test/app2": "app2-ID"
+    # Add all your projects here
+  
+  # Default project ID if not found in mappings
+  defaultProject: "test"
+  
+  # Team mappings
+  teams:
+    - prefixes: ["@test1/", "@shared/data"]
+      teamValue: "org1"
+      checkmarxPath: "data"
+    
+    - prefixes: ["@test2/"]
+      teamValue: "org2" 
+      checkmarxPath: "data2"
+    
+    # Add all your team mappings here
+  
+  # Default team ID if not found in mappings  
+  defaultTeam: "org"
+  
+  # FOSSA endpoint URL
+  endpoint: "https://fossa.com"
+```
+
+## Usage
+
+### Basic Usage
+
+```bash
+# Analyze projects affected by changes between commits
+fossa-nx fossa --base=develop --head=feature-branch
+
+# Analyze all projects in the repository
+fossa-nx fossa --all
+
+# Use a specific config file
+fossa-nx fossa --config=/path/to/config.yaml --all
+
+# Increase verbosity
+fossa-nx fossa --verbose --base=main --head=HEAD
+```
+
+### Advanced Options
+
+```bash
+# Change the number of concurrent scans (default: number of CPU cores)
+fossa-nx fossa --all --concurrent=16
+
+# Set a custom timeout (default: 30 minutes)
+fossa-nx fossa --all --timeout=60
+
+# Performance profiling
+fossa-nx fossa --all --cpuprofile=cpu.prof --memprofile=mem.prof
+```
+
+### Complete Usage Reference
+
+```
+Usage:
+  fossa-nx fossa [flags]
+
+Flags:
+  -a, --all              Analyze all projects, not just affected ones
+      --base string      Base commit for comparison
+  -j, --concurrent int   Maximum number of concurrent FOSSA scans (default: number of CPUs)
+      --head string      Head commit for comparison
+  -t, --timeout int      Timeout in minutes for the entire operation (default 30)
+  -v, --verbose          Enable verbose logging
+
+Global Flags:
+  -c, --config string     Path to config file
+      --cpuprofile string Write CPU profile to file
+      --memprofile string Write memory profile to file
+```
+
+## Technical Architecture
+
+FOSSA-NX CLI uses Go's advanced concurrency primitives for high performance:
+
+### Concurrency Model
+
+- **Worker Pool Pattern**: Uses a pool of worker goroutines to process projects in parallel
+- **Buffered Channels**: Efficiently distributes work and collects results
+- **Context-Based Cancellation**: Ensures proper cleanup on timeouts
+- **Atomic Operations**: Thread-safe counters for statistics
+- **Mutexes**: Limited use for filesystem operations and non-atomic state
+
+## FOSSA-NX CLI Architecture
+
+```
++----------------------------------------------------------------------------------------------------------+
+|                                             FOSSA-NX CLI Architecture                                    |
++----------------------------------------------------------------------------------------------------------+
+
++-------------+     +-----------------+     +-------------------+     +-----------------+
+| User Command|---->| Parse Arguments |---->| Load Configuration|---->| Get NX Projects |
++-------------+     +-----------------+     +-------------------+     +-----------------+
+                                                                              |
+                                                                              v
+                                +-------------------------------+
+                                |                               |
+                                |     Concurrency Control       |
+                                |                               |
+                                +--------------+----------------+
+                                               |
+                                               |
+                                               v
++----------------------------------------------------------------------------+
+|                            Worker Pool Architecture                         |
++----------------------------------------------------------------------------+
+
+  +----------------+      +--------------+     +-------------+
+  | Project List   |      | Channel      |     | Worker Pool |
+  | [P1,P2,P3,...] |----->| Buffer       |---->| Goroutines  |
+  +----------------+      +--------------+     +-------------+
+                                |                    |
+                                v                    v
+         +--------------------------+      +-------------------+
+         | projectCh (buffered)     |      | WaitGroup tracks |
+         | Size = workers*2         |      | worker completion|
+         +--------------------------+      +-------------------+
+                   |                               |
+                   v                               v
+  +-------------------------------+      +-----------------------+
+  | Sender Goroutine              |      | Multiple Worker       |
+  | - Feeds projects to channel   |      | Goroutines (1 per CPU)|
+  | - Handles context cancellation|      | - Process projects    |
+  +-------------------------------+      | - Send results        |
+                                         +-----------------------+
+                                                   |
+                                                   v
+                                         +-----------------------+
+                                         | resultCh (buffered)   |
+                                         | Size = workers*2      |
+                                         +-----------------------+
+                                                   |
+                                                   v
+                           +-------------------------------------------+
+                           | Results Processor in Main Goroutine       |
+                           | - Processes results as they arrive        |
+                           | - Updates statistics                      |
+                           | - Logs success/failure                    |
+                           +-------------------------------------------+
+
+Concurrency Flow:
+==================
+
+  Main Thread                 Sender Goroutine             Worker Goroutines (n)         
+  ============                ================             ====================         
+       |                            |                              |
+       |---(Initialize)------------>|                              |
+       |                            |                              |
+       |---(Start workers)---------------------------------------->|
+       |                            |                              |
+       |                            |---(Send project)------------>|
+       |                            |                              |
+       |                            |<-----(Request next)----------|
+       |                            |                              |
+       |                            |---(Send project)------------>|
+       |                            |                              |
+       |<--(Collect results)-----------------------------------------|
+       |                            |                              |
+       |---(Context canceled?)----->|                              |
+       |                            |                              |
+       |                            |---(Close channel)----------->|
+       |                            |                              |
+       |<--(All workers done)---------------------------------------|
+       |                            |                              |
+       |---(Print summary)          |                              |
+       |                            |                              |
+
+Synchronization Mechanisms:
+===========================
+
+  +-------------------+    +-------------------+    +-------------------+
+  | sync.WaitGroup    |    | Buffered Channels |    | Context           |
+  | - Track completion|    | - Flow control    |    | - Cancellation    |
+  | - Join goroutines |    | - Work queue      |    | - Timeout handling|
+  +-------------------+    +-------------------+    +-------------------+
+                 |                  |                      |
+                 v                  v                      v
+  +-------------------+    +-------------------+    +-------------------+
+  | Atomic Operations |    | Mutex Protection  |    | Select Statements |
+  | - Thread-safe     |    | - Protect shared  |    | - Non-blocking I/O|
+  |   counters        |    |   resources       |    | - Multi-channel   |
+  +-------------------+    +-------------------+    +-------------------+
+```
+
+### Key Components
+
+- **nx**: Handles project discovery and dependency resolution
+- **fossa**: Performs the actual FOSSA analysis with proper Git context
+- **mapping**: Manages project/team mappings from configuration
+- **git**: Encapsulates Git operations with caching
+
+## Performance Optimization
+
+This tool is highly optimized for performance:
+
+- **Caching**: Project roots, Git info, and configuration are cached
+- **Parallel Processing**: Multiple analyses run simultaneously
+- **Efficient Resource Usage**: Controlled concurrency prevents system overload
+- **Minimal Filesystem Operations**: Avoids unnecessary I/O
+- **Smart Dependency Resolution**: Creates accurate package.json files for analysis
+
+## Troubleshooting
+
+### Common Issues
+
+**Error: No configuration file found**
+- Create `fossa-config.yaml` in your project directory or specify with `--config`
+
+**Error: Could not determine project root**
+- Verify project name matches NX structure
+- Check your NX workspace configuration
+
+**Error: FOSSA analyze command failed**
+- Ensure FOSSA CLI is installed and authenticated
+- Check team values in configuration file
+
+**Error: SSL certificate issues**
+- Tool automatically unsets SSL_CERT_DIR environment variable
+
+### Performance Issues
+
+If scans are taking too long:
+- Increase concurrency with `--concurrent` flag
+- Ensure system has sufficient resources
+- Use `--verbose` to identify bottlenecks
+
+### Debugging
+
+For advanced debugging:
+- Use `--verbose` flag for detailed logging
+- Use `--cpuprofile` and `--memprofile` flags
+- Examine Go profiling data with `go tool pprof`
+
+# For CPU profile visualization
+```go tool pprof -http=:8080 cpu.prof```
+
+# For memory profile visualization
+```go tool pprof -http=:8080 mem.prof```
+This opens a web interface on port 8080 where you can explore:
