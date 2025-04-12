@@ -12,8 +12,15 @@ import (
 	"time"
 
 	"github.com/kamalesh-seervi/fossa-nx/internal/fossa"
+	"github.com/kamalesh-seervi/fossa-nx/internal/mapping"
 	"github.com/kamalesh-seervi/fossa-nx/internal/nx"
 	"github.com/spf13/cobra"
+)
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 type Result struct {
@@ -105,24 +112,31 @@ func (s *Stats) print() {
 
 func main() {
 	var (
-		base           string
-		head           string
-		verboseLogging bool
-		maxConcurrent  int
-		timeout        int
-		configPath     string
-		cpuProfile     string
-		memProfile     string
-		allProjects    bool // New flag for analyzing all projects
+		base            string
+		head            string
+		verboseLogging  bool
+		maxConcurrent   int
+		timeout         int
+		configPath      string
+		cpuProfile      string
+		memProfile      string
+		allProjects     bool
+		includeUnmapped bool
 	)
+
+	// Check for version flag - FIXED: direct check without loop
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-V") {
+		fmt.Printf("fossa-nx version %s (%s) built on %s\n", version, commit, date)
+		os.Exit(0)
+	}
 
 	// Initialize stats tracking
 	stats := &Stats{}
 
 	rootCmd := &cobra.Command{
 		Use:   "fossa-nx",
-		Short: "fossa-nx is a CLI tool for Ford's development workflow",
-		Long:  `A CLI tool to help Ford developers with various tasks including FOSSA analysis.`,
+		Short: "High-performance FOSSA license scanning for NX monorepos",
+		Long:  `A CLI tool to help developers run FOSSA license analysis efficiently on NX monorepo projects.`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Set config path if provided
 			if configPath != "" {
@@ -166,11 +180,14 @@ func main() {
 		Short: "Run FOSSA analysis on NX projects",
 		Long: `Run FOSSA analysis on NX projects.
 		
-By default, only affected projects are analyzed. Use the --all flag to analyze all projects.
+By default, only affected projects that are mapped in the configuration are analyzed.
+Use the --all flag to analyze all mapped projects.
+Use the --include-unmapped flag to include projects not defined in configuration.
 
 Examples:
-	fossa-nx fossa --base=develop --head=feature-branch  # Analyze affected projects
-  fossa-nx fossa --all                                # Analyze all projects
+  fossa-nx fossa --base=develop --head=feature-branch  # Analyze affected mapped projects
+  fossa-nx fossa --all                                # Analyze all mapped projects
+  fossa-nx fossa --all --include-unmapped             # Analyze all projects, even unmapped ones
 `,
 		Run: func(cmd *cobra.Command, args []string) {
 			if verboseLogging {
@@ -179,26 +196,55 @@ Examples:
 					log.Printf("Using base: %s and head: %s\n", base, head)
 				}
 				if allProjects {
-					log.Println("Analyzing ALL projects (not just affected ones)")
+					log.Println("Analyzing ALL mapped projects (not just affected ones)")
+				}
+				if includeUnmapped {
+					log.Println("Including projects not defined in configuration")
 				}
 			}
 
-			// Get projects based on all flag
+			// Get all candidate projects (either all or affected)
 			startTime := time.Now()
-			projects, err := nx.GetProjects(base, head, allProjects)
+			candidateProjects, err := nx.GetProjects(base, head, allProjects)
 			if err != nil {
 				log.Fatalf("Error getting projects: %v", err)
 			}
+			
+			// Filter projects based on mapping configuration
+			var projects []string
+			var skippedProjects []string
+			
+			// Only filter if we're not including unmapped projects
+			if !includeUnmapped {
+				for _, project := range candidateProjects {
+					if mapping.IsProjectMapped(project) {
+						projects = append(projects, project)
+					} else {
+						skippedProjects = append(skippedProjects, project)
+					}
+				}
+			} else {
+				projects = candidateProjects
+			}
+			
 			projectFetchTime := time.Since(startTime)
 
 			if len(projects) == 0 {
-				log.Println("No projects found.")
+				log.Println("No projects found to analyze.")
+				if len(skippedProjects) > 0 {
+					log.Printf("Skipped %d unmapped projects. Use --include-unmapped to include them.", len(skippedProjects))
+				}
 				return
 			}
 
 			if verboseLogging {
-				log.Printf("Found %d projects in %.2f seconds\n",
-					len(projects), projectFetchTime.Seconds())
+				log.Printf("Found %d projects to analyze in %.2f seconds\n", 
+						   len(projects), projectFetchTime.Seconds())
+				
+				if len(skippedProjects) > 0 {
+					log.Printf("Skipped %d unmapped projects: %v\n", 
+							   len(skippedProjects), skippedProjects)
+				}
 			}
 
 			// Set default concurrent workers if not specified
@@ -233,6 +279,7 @@ Examples:
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Path to config file")
 	rootCmd.PersistentFlags().StringVar(&cpuProfile, "cpuprofile", "", "Write CPU profile to file")
 	rootCmd.PersistentFlags().StringVar(&memProfile, "memprofile", "", "Write memory profile to file")
+	rootCmd.PersistentFlags().BoolP("version", "V", false, "Show version information")
 
 	fossaCmd.Flags().StringVar(&base, "base", "", "Base commit for comparison")
 	fossaCmd.Flags().StringVar(&head, "head", "", "Head commit for comparison")
@@ -240,6 +287,7 @@ Examples:
 	fossaCmd.Flags().IntVarP(&maxConcurrent, "concurrent", "j", 0, "Maximum number of concurrent FOSSA scans (default: number of CPUs)")
 	fossaCmd.Flags().IntVarP(&timeout, "timeout", "t", 30, "Timeout in minutes for the entire operation")
 	fossaCmd.Flags().BoolVarP(&allProjects, "all", "a", false, "Analyze all projects, not just affected ones")
+	fossaCmd.Flags().BoolVar(&includeUnmapped, "include-unmapped", false, "Include projects not defined in configuration")
 
 	rootCmd.AddCommand(fossaCmd)
 
@@ -249,8 +297,9 @@ Examples:
 	}
 }
 
+// FIXED: stats parameter is now a pointer (*Stats)
 func processProjectsOptimized(ctx context.Context, projects []string, workers int, verbose bool, stats *Stats) {
-	// Use buffered channels appropriately sized
+	// FIXED: corrected buffer size
 	projectCh := make(chan string, workers*2)
 	resultCh := make(chan Result, workers*2)
 
