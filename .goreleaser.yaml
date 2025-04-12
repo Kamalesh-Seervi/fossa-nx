@@ -44,8 +44,6 @@ brews:
     homepage: "https://github.com/kamalesh-seervi/fossa-nx"
     description: "High-performance FOSSA license scanning for NX monorepos"
     license: "MIT"
-    dependencies:
-      - name: fossa-cli
     test: |
       system "#{bin}/fossa-nx", "--version"
     install: |
