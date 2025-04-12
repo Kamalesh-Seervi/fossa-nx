@@ -9,21 +9,21 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kamalesh-seervi/fossa-nx/internal/git"
 	"github.com/kamalesh-seervi/fossa-nx/internal/mapping"
 	"github.com/kamalesh-seervi/fossa-nx/internal/nx"
 )
 
 // Global mutex for filesystem operations to prevent race conditions
 var (
-	fsLock           sync.Mutex
-	monorepoRootOnce sync.Once
-	monorepoRootDir  string
-	monorepoRootErr  error
-	filteredEnvOnce  sync.Once
-	filteredEnvVars  []string
+	fsLock             sync.Mutex
+	monorepoRootOnce   sync.Once
+	monorepoRootDir    string
+	monorepoRootErr    error
+	filteredEnvOnce    sync.Once
+	filteredEnvVars    []string
 )
 
+// getMonorepoRoot returns the root directory of the monorepo (cached)
 func getMonorepoRoot() (string, error) {
 	monorepoRootOnce.Do(func() {
 		var err error
@@ -33,11 +33,12 @@ func getMonorepoRoot() (string, error) {
 	return monorepoRootDir, monorepoRootErr
 }
 
+// getFilteredEnv returns environment variables without SSL_CERT_DIR (cached)
 func getFilteredEnv() []string {
 	filteredEnvOnce.Do(func() {
 		env := os.Environ()
 		filteredEnvVars = make([]string, 0, len(env))
-
+		
 		for _, envVar := range env {
 			if !strings.HasPrefix(envVar, "SSL_CERT_DIR=") {
 				filteredEnvVars = append(filteredEnvVars, envVar)
@@ -49,6 +50,11 @@ func getFilteredEnv() []string {
 
 // RunAnalysis runs FOSSA analysis for a project with optimized performance
 func RunAnalysis(projectName string) error {
+	// Verify project is mapped in config
+	if !mapping.IsProjectMapped(projectName) {
+		return fmt.Errorf("project %s is not mapped in configuration", projectName)
+	}
+
 	// Get project root (cached)
 	projectRoot, err := nx.GetProjectRoot(projectName)
 	if err != nil {
@@ -67,14 +73,14 @@ func RunAnalysis(projectName string) error {
 		return fmt.Errorf("failed to get monorepo root: %w", err)
 	}
 
-	// State tracking variables
+	// State tracking variables 
 	var (
-		packageJsonPath         = filepath.Join(absProjectRoot, "package.json")
-		originalPackageJson     []byte
-		packageJsonExists       = false
-		nodeModulesPath         = filepath.Join(absProjectRoot, "node_modules")
-		monorepoNodeModulesPath = filepath.Join(monorepoRoot, "node_modules")
-		nodeModulesCreated      = false
+		packageJsonPath = filepath.Join(absProjectRoot, "package.json")
+		originalPackageJson []byte
+		packageJsonExists = false
+		nodeModulesPath = filepath.Join(absProjectRoot, "node_modules")
+		monorepoNodeModulesPath = filepath.Join(monorepoRoot, "node_modules") 
+		nodeModulesCreated = false
 	)
 
 	// Backup package.json if it exists
@@ -93,7 +99,7 @@ func RunAnalysis(projectName string) error {
 	fsLock.Lock()
 	_, err = nx.CreateTemporaryPackageJson(projectName, absProjectRoot)
 	fsLock.Unlock()
-
+	
 	if err != nil {
 		return fmt.Errorf("failed to create temporary package.json: %w", err)
 	}
@@ -114,9 +120,20 @@ func RunAnalysis(projectName string) error {
 	fossaProject := mapping.GetFossaProjectID(projectName)
 	fossaEndpoint := mapping.GetFossaEndpoint()
 
-	// Get current git commit hash and branch name (cached)
-	gitCommitHash, _ := git.GetCommitHash()
-	gitBranchName, _ := git.GetBranchName()
+	// Get current git commit information
+	gitCommitCmd := exec.Command("git", "rev-parse", "HEAD")
+	gitCommitOutput, err := gitCommitCmd.Output()
+	gitCommitHash := ""
+	if err == nil {
+		gitCommitHash = strings.TrimSpace(string(gitCommitOutput))
+	}
+	
+	gitBranchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	gitBranchOutput, err := gitBranchCmd.Output()
+	gitBranchName := ""
+	if err == nil {
+		gitBranchName = strings.TrimSpace(string(gitBranchOutput))
+	}
 
 	// Ensure cleanup of temporary resources when done
 	defer func() {
@@ -145,18 +162,18 @@ func RunAnalysis(projectName string) error {
 		"-T", teamValue,
 		"-p", fossaProject,
 	}
-
+	
 	// Only add branch and revision if available
 	if gitBranchName != "" {
 		analyzeArgs = append(analyzeArgs, "-b", gitBranchName)
 	}
-
+	
 	if gitCommitHash != "" {
 		analyzeArgs = append(analyzeArgs, "-r", gitCommitHash)
 	}
-
+	
 	analyzeArgs = append(analyzeArgs, "--policy", "Website/Hosted Service Use")
-
+	
 	analyzeCmd := exec.Command("fossa", analyzeArgs...)
 	analyzeCmd.Dir = absProjectRoot
 	analyzeCmd.Env = filteredEnv
@@ -173,11 +190,11 @@ func RunAnalysis(projectName string) error {
 		"-e", fossaEndpoint,
 		"-p", fossaProject,
 	}
-
+	
 	if gitCommitHash != "" {
 		testArgs = append(testArgs, "-r", gitCommitHash)
 	}
-
+	
 	testCmd := exec.Command("fossa", testArgs...)
 	testCmd.Dir = absProjectRoot
 	testCmd.Env = filteredEnv
