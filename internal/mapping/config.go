@@ -51,7 +51,7 @@ func LoadConfig() (*Config, error) {
 func loadConfigImpl() error {
 	// Get config path from environment if set
 	configPath := os.Getenv("FOSSA_CONFIG_PATH")
-
+	
 	// If config path is set and file exists, use it
 	if configPath != "" {
 		if _, err := os.Stat(configPath); err == nil {
@@ -107,19 +107,30 @@ func loadConfigFromFile(configPath string) error {
 	if config.Fossa.Projects == nil || len(config.Fossa.Projects) == 0 {
 		return fmt.Errorf("missing or empty projects section in config file %s", configPath)
 	}
-
+	
 	if config.Fossa.Teams == nil || len(config.Fossa.Teams) == 0 {
 		return fmt.Errorf("missing or empty teams section in config file %s", configPath)
 	}
-
+	
 	if config.Fossa.Endpoint == "" {
 		return fmt.Errorf("missing endpoint in config file %s", configPath)
 	}
 
 	globalConfig = config
 	fmt.Printf("Loaded configuration from %s\n", configPath)
-
+	
 	return nil
+}
+
+// IsProjectMapped returns whether a project is mapped in the configuration
+func IsProjectMapped(projectName string) bool {
+	config, err := LoadConfig()
+	if err != nil {
+		return false
+	}
+	
+	_, exists := config.Fossa.Projects[projectName]
+	return exists
 }
 
 // GetFossaProjectID returns the FOSSA project ID for a given project name
@@ -133,7 +144,7 @@ func GetFossaProjectID(projectName string) string {
 	if id, ok := config.Fossa.Projects[projectName]; ok {
 		return id
 	}
-
+	
 	return config.Fossa.DefaultProject
 }
 
@@ -153,7 +164,7 @@ func GetTeamValue(projectName string) string {
 			}
 		}
 	}
-
+	
 	return config.Fossa.DefaultTeam
 }
 
@@ -164,6 +175,6 @@ func GetFossaEndpoint() string {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
 	}
-
+	
 	return config.Fossa.Endpoint
 }
