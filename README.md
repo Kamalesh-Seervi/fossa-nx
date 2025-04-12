@@ -35,7 +35,7 @@ FOSSA-NX CLI is a developer-friendly tool designed to simplify running FOSSA lic
 ### Using Homebrew (This is Under Development NotDone)
 
 ```bash
-brew tap Kamalesh-Seervi/fossa-nx https://github.com/Kamalesh-Seervi/fossa-nx
+brew tap kamalesh-seervi/tap
 brew install fossa-nx
 ```
 
