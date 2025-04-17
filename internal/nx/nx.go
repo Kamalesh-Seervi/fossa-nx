@@ -15,10 +15,10 @@ var (
 	// Cache project roots to avoid repeated lookups
 	projectRootCache = make(map[string]string)
 	projectRootMutex sync.RWMutex
-	
+
 	// Cache all projects list
-	allProjectsCache []string
-	allProjectsMutex sync.RWMutex
+	allProjectsCache  []string
+	allProjectsMutex  sync.RWMutex
 	allProjectsLoaded bool
 )
 
@@ -33,62 +33,62 @@ func GetProjects(base, head string, getAllProjects bool) ([]string, error) {
 			return projects, nil
 		}
 		allProjectsMutex.RUnlock()
-		
+
 		// Not in cache, need to fetch all projects
 		allProjectsMutex.Lock()
 		defer allProjectsMutex.Unlock()
-		
+
 		// Double-check after lock acquisition
 		if allProjectsLoaded {
 			return allProjectsCache, nil
 		}
-		
+
 		// Get all projects
 		cmd := exec.Command("nx", "show", "projects")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("failed to run nx command: %w\nOutput: %s", err, output)
 		}
-		
+
 		// Filter empty lines
 		rawProjects := strings.Split(strings.TrimSpace(string(output)), "\n")
 		projects := make([]string, 0, len(rawProjects))
-		
+
 		for _, p := range rawProjects {
 			if p != "" {
 				projects = append(projects, p)
 			}
 		}
-		
+
 		// Cache the result
 		allProjectsCache = projects
 		allProjectsLoaded = true
-		
+
 		return projects, nil
 	} else {
 		// Get affected projects
 		args := []string{"show", "projects", "--affected", "-t", "build"}
-		
+
 		if base != "" && head != "" {
 			args = append(args, fmt.Sprintf("--base=%s", base), fmt.Sprintf("--head=%s", head))
 		}
-		
+
 		cmd := exec.Command("nx", args...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("failed to run nx command: %w\nOutput: %s", err, output)
 		}
-		
+
 		// Filter empty lines
 		rawProjects := strings.Split(strings.TrimSpace(string(output)), "\n")
 		projects := make([]string, 0, len(rawProjects))
-		
+
 		for _, p := range rawProjects {
 			if p != "" {
 				projects = append(projects, p)
 			}
 		}
-		
+
 		return projects, nil
 	}
 }
@@ -108,18 +108,18 @@ func GetProjectRoot(projectName string) (string, error) {
 		return root, nil
 	}
 	projectRootMutex.RUnlock()
-	
+
 	// Not in cache, need to determine project root
 	root, err := determineProjectRoot(projectName)
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Store in cache
 	projectRootMutex.Lock()
 	projectRootCache[projectName] = root
 	projectRootMutex.Unlock()
-	
+
 	return root, nil
 }
 
@@ -140,13 +140,13 @@ func determineProjectRoot(projectName string) (string, error) {
 	// Fallback: try common patterns for nx project directories
 	sanitizedName := strings.ReplaceAll(projectName, "@", "")
 	sanitizedName = strings.ReplaceAll(sanitizedName, "/", "-")
-	
+
 	commonPatterns := []string{
 		filepath.Join("apps", sanitizedName),
 		filepath.Join("libs", sanitizedName),
 		filepath.Join("packages", sanitizedName),
 	}
-	
+
 	for _, pattern := range commonPatterns {
 		if _, err := os.Stat(pattern); err == nil {
 			return pattern, nil
@@ -170,18 +170,18 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 	// Get project dependencies using nx show project
 	cmd := exec.Command("nx", "show", "project", projectName, "--with-deps", "--json")
 	depOutput, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		// If getting dependencies fails, create a minimal package.json
 		jsonData, err := json.MarshalIndent(packageJSON, "", "  ")
 		if err != nil {
 			return "", fmt.Errorf("failed to serialize package.json: %w", err)
 		}
-		
+
 		if err := ioutil.WriteFile(packageJsonPath, jsonData, 0644); err != nil {
 			return "", fmt.Errorf("failed to write package.json: %w", err)
 		}
-		
+
 		return packageJsonPath, nil
 	}
 
@@ -190,7 +190,7 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 	if err := json.Unmarshal(depOutput, &depInfo); err == nil {
 		// Add dependencies to package.json
 		dependencies := packageJSON["dependencies"].(map[string]string)
-		
+
 		// Add all projects that this project depends on
 		if deps, ok := depInfo["dependencies"].([]interface{}); ok {
 			for _, dep := range deps {
@@ -211,7 +211,7 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 					packageJSON[k] = v
 				}
 			}
-			
+
 			// Merge dependencies
 			if existingDeps, ok := existingPackage["dependencies"].(map[string]interface{}); ok {
 				for k, v := range existingDeps {
@@ -228,10 +228,47 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("failed to serialize package.json: %w", err)
 	}
-	
+
 	if err := ioutil.WriteFile(packageJsonPath, jsonData, 0644); err != nil {
 		return "", fmt.Errorf("failed to write package.json: %w", err)
 	}
-	
+
 	return packageJsonPath, nil
+}
+
+// GetProjectsFromList takes a comma-separated string of project names and returns a list of valid projects
+func GetProjectsFromList(projectsList string) ([]string, []string, error) {
+	// Get all available projects first
+	allProjects, err := GetProjects("", "", true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get all projects: %w", err)
+	}
+
+	// Create a map for O(1) lookup of valid projects
+	projectMap := make(map[string]bool)
+	for _, p := range allProjects {
+		projectMap[p] = true
+	}
+
+	// Parse comma-separated projects list
+	requestedProjects := strings.Split(projectsList, ",")
+	validProjects := []string{}
+	invalidProjects := []string{}
+
+	for _, project := range requestedProjects {
+		trimmedProject := strings.TrimSpace(project)
+		if trimmedProject == "" {
+			continue // Skip empty project names
+		}
+
+		if projectMap[trimmedProject] {
+			// Project exists
+			validProjects = append(validProjects, trimmedProject)
+		} else {
+			// Project doesn't exist
+			invalidProjects = append(invalidProjects, trimmedProject)
+		}
+	}
+
+	return validProjects, invalidProjects, nil
 }
