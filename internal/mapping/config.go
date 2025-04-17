@@ -8,39 +8,19 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kamalesh-seervi/fossa-nx/internal/models"
 	"gopkg.in/yaml.v3"
 )
 
-// FossaConfig holds all FOSSA-related configuration
-type FossaConfig struct {
-	Projects       map[string]string `yaml:"projects"`
-	DefaultProject string            `yaml:"defaultProject"`
-	Teams          []TeamMapping     `yaml:"teams"`
-	DefaultTeam    string            `yaml:"defaultTeam"`
-	Endpoint       string            `yaml:"endpoint"`
-}
-
-// TeamMapping represents a team mapping from project prefix to team value
-type TeamMapping struct {
-	Prefixes      []string `yaml:"prefixes"`
-	TeamValue     string   `yaml:"teamValue"`
-	CheckmarxPath string   `yaml:"checkmarxPath"`
-}
-
-// Config holds the entire application configuration
-type Config struct {
-	Fossa FossaConfig `yaml:"fossa"`
-}
-
 var (
 	// globalConfig holds the loaded configuration
-	globalConfig *Config
+	globalConfig *models.Config
 	configOnce   sync.Once
 	configError  error
 )
 
 // LoadConfig loads the configuration from the config file - using sync.Once for thread-safety
-func LoadConfig() (*Config, error) {
+func LoadConfig() (*models.Config, error) {
 	configOnce.Do(func() {
 		configError = loadConfigImpl()
 	})
@@ -51,7 +31,7 @@ func LoadConfig() (*Config, error) {
 func loadConfigImpl() error {
 	// Get config path from environment if set
 	configPath := os.Getenv("FOSSA_CONFIG_PATH")
-	
+
 	// If config path is set and file exists, use it
 	if configPath != "" {
 		if _, err := os.Stat(configPath); err == nil {
@@ -98,7 +78,7 @@ func loadConfigFromFile(configPath string) error {
 		return fmt.Errorf("error reading config file %s: %w", configPath, err)
 	}
 
-	config := &Config{}
+	config := &models.Config{}
 	if err = yaml.Unmarshal(configData, config); err != nil {
 		return fmt.Errorf("error parsing config file %s: %w", configPath, err)
 	}
@@ -107,18 +87,18 @@ func loadConfigFromFile(configPath string) error {
 	if config.Fossa.Projects == nil || len(config.Fossa.Projects) == 0 {
 		return fmt.Errorf("missing or empty projects section in config file %s", configPath)
 	}
-	
+
 	if config.Fossa.Teams == nil || len(config.Fossa.Teams) == 0 {
 		return fmt.Errorf("missing or empty teams section in config file %s", configPath)
 	}
-	
+
 	if config.Fossa.Endpoint == "" {
 		return fmt.Errorf("missing endpoint in config file %s", configPath)
 	}
 
 	globalConfig = config
 	fmt.Printf("Loaded configuration from %s\n", configPath)
-	
+
 	return nil
 }
 
@@ -128,7 +108,7 @@ func IsProjectMapped(projectName string) bool {
 	if err != nil {
 		return false
 	}
-	
+
 	_, exists := config.Fossa.Projects[projectName]
 	return exists
 }
@@ -144,7 +124,7 @@ func GetFossaProjectID(projectName string) string {
 	if id, ok := config.Fossa.Projects[projectName]; ok {
 		return id
 	}
-	
+
 	return config.Fossa.DefaultProject
 }
 
@@ -164,7 +144,7 @@ func GetTeamValue(projectName string) string {
 			}
 		}
 	}
-	
+
 	return config.Fossa.DefaultTeam
 }
 
@@ -175,6 +155,6 @@ func GetFossaEndpoint() string {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	return config.Fossa.Endpoint
 }
