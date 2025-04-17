@@ -2,17 +2,24 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/kamalesh-seervi/fossa-nx/internal/fossa"
 	"github.com/kamalesh-seervi/fossa-nx/internal/mapping"
+	"github.com/kamalesh-seervi/fossa-nx/internal/models"
+	"github.com/kamalesh-seervi/fossa-nx/internal/notify/email"
+	"github.com/kamalesh-seervi/fossa-nx/internal/notify/github"
 	"github.com/kamalesh-seervi/fossa-nx/internal/nx"
 	"github.com/spf13/cobra"
 )
@@ -23,21 +30,16 @@ var (
 	date    = "unknown"
 )
 
-type Result struct {
-	Project  string
-	Error    error
-	Duration time.Duration
-}
-
 // Stats for tracking execution metrics
 type Stats struct {
-	totalProjects int32
-	successful    int32
-	failed        int32
-	totalDuration int64 // nanoseconds
-	maxDuration   int64 // nanoseconds
-	minDuration   int64 // nanoseconds (initialized to a large value)
-	mutex         sync.Mutex
+	totalProjects   int32
+	successful      int32
+	failed          int32
+	vulnerabilities int32
+	totalDuration   int64 // nanoseconds
+	maxDuration     int64 // nanoseconds
+	minDuration     int64 // nanoseconds (initialized to a large value)
+	mutex           sync.Mutex
 }
 
 func (s *Stats) initialize(projectCount int) {
@@ -51,13 +53,17 @@ func (s *Stats) initialize(projectCount int) {
 	s.mutex.Unlock()
 }
 
-func (s *Stats) recordResult(success bool, duration time.Duration) {
+func (s *Stats) recordResult(success bool, duration time.Duration, vulnCount int) {
 	durationNanos := duration.Nanoseconds()
 
 	if success {
 		atomic.AddInt32(&s.successful, 1)
 	} else {
 		atomic.AddInt32(&s.failed, 1)
+	}
+
+	if vulnCount > 0 {
+		atomic.AddInt32(&s.vulnerabilities, int32(vulnCount))
 	}
 
 	atomic.AddInt64(&s.totalDuration, durationNanos)
@@ -85,6 +91,7 @@ func (s *Stats) print() {
 	successful := atomic.LoadInt32(&s.successful)
 	failed := atomic.LoadInt32(&s.failed)
 	total := atomic.LoadInt32(&s.totalProjects)
+	vulnCount := atomic.LoadInt32(&s.vulnerabilities)
 	totalDuration := time.Duration(atomic.LoadInt64(&s.totalDuration))
 
 	s.mutex.Lock()
@@ -102,11 +109,27 @@ func (s *Stats) print() {
 	log.Printf("  Total Projects: %d", total)
 	log.Printf("  Successful: %d", successful)
 	log.Printf("  Failed: %d", failed)
-	log.Printf("  Average Duration: %.2f seconds", avgDuration.Seconds())
+	log.Printf("  Vulnerabilities Found: %d", vulnCount)
+
+	// Display duration in minutes if > 60 seconds, otherwise show in seconds
+	if avgDuration.Seconds() > 60.0 {
+		log.Printf("  Average Duration: %.2f minutes", avgDuration.Minutes())
+	} else {
+		log.Printf("  Average Duration: %.2f seconds", avgDuration.Seconds())
+	}
 
 	if successful+failed > 0 {
-		log.Printf("  Min Duration: %.2f seconds", minDuration.Seconds())
-		log.Printf("  Max Duration: %.2f seconds", maxDuration.Seconds())
+		if minDuration.Seconds() > 60.0 {
+			log.Printf("  Min Duration: %.2f minutes", minDuration.Minutes())
+		} else {
+			log.Printf("  Min Duration: %.2f seconds", minDuration.Seconds())
+		}
+
+		if maxDuration.Seconds() > 60.0 {
+			log.Printf("  Max Duration: %.2f minutes", maxDuration.Minutes())
+		} else {
+			log.Printf("  Max Duration: %.2f seconds", maxDuration.Seconds())
+		}
 	}
 }
 
@@ -122,9 +145,26 @@ func main() {
 		memProfile      string
 		allProjects     bool
 		includeUnmapped bool
+		projectName     string // Add specific project option
+
+		// Email configuration
+		emailEnabled bool
+		smtpServer   string
+		smtpPort     int
+		smtpUser     string
+		smtpPassword string
+		fromEmail    string
+		toEmails     string
+
+		// GitHub configuration
+		githubEnabled bool
+		githubToken   string
+		githubOrg     string
+		githubRepo    string
+		githubApiUrl  string
 	)
 
-	// Check for version flag - FIXED: direct check without loop
+	// Check for version flag
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-V") {
 		fmt.Printf("fossa-nx version %s (%s) built on %s\n", version, commit, date)
 		os.Exit(0)
@@ -179,23 +219,30 @@ func main() {
 		Use:   "fossa",
 		Short: "Run FOSSA analysis on NX projects",
 		Long: `Run FOSSA analysis on NX projects.
-		
+        
 By default, only affected projects that are mapped in the configuration are analyzed.
 Use the --all flag to analyze all mapped projects.
 Use the --include-unmapped flag to include projects not defined in configuration.
+Use the --project flag to analyze a specific project by name.
 
 Examples:
   fossa-nx fossa --base=develop --head=feature-branch  # Analyze affected mapped projects
   fossa-nx fossa --all                                # Analyze all mapped projects
   fossa-nx fossa --all --include-unmapped             # Analyze all projects, even unmapped ones
+  fossa-nx fossa --project=my-app                     # Analyze a specific project
 `,
 		Run: func(cmd *cobra.Command, args []string) {
 			if verboseLogging {
 				log.Println("Running FOSSA analysis on projects...")
-				if !allProjects && base != "" && head != "" {
+				if projectName != "" {
+					if strings.Contains(projectName, ",") {
+						log.Printf("Analyzing specific projects: %s\n", projectName)
+					} else {
+						log.Printf("Analyzing specific project: %s\n", projectName)
+					}
+				} else if !allProjects && base != "" && head != "" {
 					log.Printf("Using base: %s and head: %s\n", base, head)
-				}
-				if allProjects {
+				} else if allProjects {
 					log.Println("Analyzing ALL mapped projects (not just affected ones)")
 				}
 				if includeUnmapped {
@@ -203,47 +250,158 @@ Examples:
 				}
 			}
 
-			// Get all candidate projects (either all or affected)
-			startTime := time.Now()
-			candidateProjects, err := nx.GetProjects(base, head, allProjects)
-			if err != nil {
-				log.Fatalf("Error getting projects: %v", err)
+			// Parse email recipients
+			recipientList := []string{}
+			if toEmails != "" {
+				recipientList = email.ParseEmailList(toEmails)
+				if verboseLogging {
+					log.Printf("Will send notifications to %d recipients", len(recipientList))
+				}
 			}
-			
-			// Filter projects based on mapping configuration
+
+			// Setup notification services
+			emailConfig := models.EmailConfig{
+				SmtpServer:   smtpServer,
+				SmtpPort:     smtpPort,
+				SmtpUser:     smtpUser,
+				SmtpPassword: smtpPassword,
+				FromEmail:    fromEmail,
+				ToEmails:     recipientList,
+				Enabled:      emailEnabled && len(recipientList) > 0,
+			}
+
+			githubConfig := models.GitHubConfig{
+				Token:        githubToken,
+				Organization: githubOrg,
+				Repository:   githubRepo,
+				ApiUrl:       githubApiUrl,
+				Enabled:      githubEnabled && githubToken != "",
+			}
+
 			var projects []string
-			var skippedProjects []string
-			
-			// Only filter if we're not including unmapped projects
-			if !includeUnmapped {
-				for _, project := range candidateProjects {
-					if mapping.IsProjectMapped(project) {
-						projects = append(projects, project)
+			startTime := time.Now()
+
+			// Check for mutually exclusive flags
+			if projectName != "" && (allProjects || (base != "" || head != "")) {
+				log.Fatalf("Error: --project flag cannot be used with --all, --base, or --head")
+			}
+
+			// Handle project-specific mode
+			if projectName != "" {
+				// Check if it's a comma-separated list
+				if strings.Contains(projectName, ",") {
+					validProjects, invalidProjects, err := nx.GetProjectsFromList(projectName)
+					if err != nil {
+						log.Fatalf("Error getting projects: %v", err)
+					}
+
+					if len(invalidProjects) > 0 {
+						log.Printf("Warning: The following projects were not found and will be skipped: %v", invalidProjects)
+					}
+
+					if len(validProjects) == 0 {
+						log.Fatalf("No valid projects found in the list: %s", projectName)
+					}
+
+					// Filter unmapped projects if needed
+					if !includeUnmapped {
+						var mappedProjects []string
+						var unmappedProjects []string
+
+						for _, project := range validProjects {
+							if mapping.IsProjectMapped(project) {
+								mappedProjects = append(mappedProjects, project)
+							} else {
+								unmappedProjects = append(unmappedProjects, project)
+							}
+						}
+
+						if len(unmappedProjects) > 0 && verboseLogging {
+							log.Printf("Skipping unmapped projects: %v. Use --include-unmapped to include them.", unmappedProjects)
+						}
+
+						if len(mappedProjects) == 0 {
+							log.Fatalf("No mapped projects found in the list. Use --include-unmapped to include unmapped projects.")
+						}
+
+						projects = mappedProjects
 					} else {
-						skippedProjects = append(skippedProjects, project)
+						projects = validProjects
+					}
+
+					if verboseLogging {
+						log.Printf("Found %d project(s) for analysis: %v", len(projects), projects)
+					}
+				} else {
+					// Original single project flow
+					allAvailableProjects, err := nx.GetProjects("", "", true)
+					if err != nil {
+						log.Fatalf("Error getting projects: %v", err)
+					}
+
+					// Check if the specified project exists
+					projectExists := false
+					for _, p := range allAvailableProjects {
+						if p == projectName {
+							projectExists = true
+							break
+						}
+					}
+
+					if !projectExists {
+						log.Fatalf("Project '%s' not found. Available projects: %v",
+							projectName, allAvailableProjects)
+					}
+
+					// Check if project is mapped (unless includeUnmapped is specified)
+					if !includeUnmapped && !mapping.IsProjectMapped(projectName) {
+						log.Fatalf("Project '%s' is not mapped in configuration. Use --include-unmapped to include it.", projectName)
+					}
+
+					projects = []string{projectName}
+					if verboseLogging {
+						log.Printf("Found project '%s' for analysis", projectName)
 					}
 				}
 			} else {
-				projects = candidateProjects
-			}
-			
-			projectFetchTime := time.Since(startTime)
-
-			if len(projects) == 0 {
-				log.Println("No projects found to analyze.")
-				if len(skippedProjects) > 0 {
-					log.Printf("Skipped %d unmapped projects. Use --include-unmapped to include them.", len(skippedProjects))
+				// Get all candidate projects (either all or affected)
+				candidateProjects, err := nx.GetProjects(base, head, allProjects)
+				if err != nil {
+					log.Fatalf("Error getting projects: %v", err)
 				}
-				return
-			}
 
-			if verboseLogging {
-				log.Printf("Found %d projects to analyze in %.2f seconds\n", 
-						   len(projects), projectFetchTime.Seconds())
-				
-				if len(skippedProjects) > 0 {
-					log.Printf("Skipped %d unmapped projects: %v\n", 
-							   len(skippedProjects), skippedProjects)
+				// Filter projects based on mapping configuration
+				var skippedProjects []string
+
+				// Only filter if we're not including unmapped projects
+				if !includeUnmapped {
+					for _, project := range candidateProjects {
+						if mapping.IsProjectMapped(project) {
+							projects = append(projects, project)
+						} else {
+							skippedProjects = append(skippedProjects, project)
+						}
+					}
+				} else {
+					projects = candidateProjects
+				}
+
+				if len(projects) == 0 {
+					log.Println("No projects found to analyze.")
+					if len(skippedProjects) > 0 {
+						log.Printf("Skipped %d unmapped projects. Use --include-unmapped to include them.", len(skippedProjects))
+					}
+					return
+				}
+
+				if verboseLogging {
+					log.Printf("Found %d projects to analyze in %.2f seconds\n",
+						len(projects), time.Since(startTime).Seconds())
+
+					if len(skippedProjects) > 0 {
+						log.Printf("Skipped %d unmapped projects: %v\n",
+							len(skippedProjects), skippedProjects)
+					}
 				}
 			}
 
@@ -262,12 +420,25 @@ Examples:
 
 			// Process projects with optimized worker pool
 			startTime = time.Now()
-			processProjectsOptimized(ctx, projects, maxConcurrent, verboseLogging, stats)
+			results := processProjectsOptimized(ctx, projects, maxConcurrent, verboseLogging, stats)
 			duration := time.Since(startTime)
 
 			// Print summary
 			log.Printf("FOSSA analysis complete in %.2f seconds", duration.Seconds())
 			stats.print()
+
+			// Send notifications if enabled
+			if emailConfig.Enabled {
+				if err := email.SendHTMLReport(results, emailConfig, verboseLogging); err != nil {
+					log.Printf("Error sending email report: %v", err)
+				}
+			}
+
+			if githubConfig.Enabled {
+				if err := github.CreateIssues(results, githubConfig, verboseLogging); err != nil {
+					log.Printf("Error creating GitHub issues: %v", err)
+				}
+			}
 
 			// Exit with error if any projects failed
 			if stats.failed > 0 {
@@ -288,20 +459,37 @@ Examples:
 	fossaCmd.Flags().IntVarP(&timeout, "timeout", "t", 30, "Timeout in minutes for the entire operation")
 	fossaCmd.Flags().BoolVarP(&allProjects, "all", "a", false, "Analyze all projects, not just affected ones")
 	fossaCmd.Flags().BoolVar(&includeUnmapped, "include-unmapped", false, "Include projects not defined in configuration")
+	fossaCmd.Flags().StringVarP(&projectName, "project", "p", "", "Analyze a specific project by name")
+
+	// Email notification flags
+	fossaCmd.Flags().BoolVar(&emailEnabled, "email", false, "Enable email notifications")
+	fossaCmd.Flags().StringVar(&smtpServer, "smtp-server", "", "SMTP server for email notifications")
+	fossaCmd.Flags().IntVar(&smtpPort, "smtp-port", 587, "SMTP port for email notifications")
+	fossaCmd.Flags().StringVar(&smtpUser, "smtp-user", "", "SMTP username")
+	fossaCmd.Flags().StringVar(&smtpPassword, "smtp-password", "", "SMTP password")
+	fossaCmd.Flags().StringVar(&fromEmail, "from-email", "", "Sender email address")
+	fossaCmd.Flags().StringVar(&toEmails, "to-email", "", "Recipient email addresses (comma-separated)")
+
+	// GitHub integration flags
+	fossaCmd.Flags().BoolVar(&githubEnabled, "github", false, "Enable GitHub issue creation")
+	fossaCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub API token")
+	fossaCmd.Flags().StringVar(&githubOrg, "github-org", "", "GitHub organization")
+	fossaCmd.Flags().StringVar(&githubRepo, "github-repo", "", "GitHub repository")
+	fossaCmd.Flags().StringVar(&githubApiUrl, "github-api-url", "", "GitHub API URL for Enterprise instances")
 
 	rootCmd.AddCommand(fossaCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
-		os.Exit(1)
+		os.Exit(0)
 	}
 }
 
-// FIXED: stats parameter is now a pointer (*Stats)
-func processProjectsOptimized(ctx context.Context, projects []string, workers int, verbose bool, stats *Stats) {
-	// FIXED: corrected buffer size
+// Updated to return results for notifications
+func processProjectsOptimized(ctx context.Context, projects []string, workers int, verbose bool, stats *Stats) []models.Result {
 	projectCh := make(chan string, workers*2)
-	resultCh := make(chan Result, workers*2)
+	resultCh := make(chan models.Result, workers*2)
+	results := make([]models.Result, 0, len(projects))
 
 	// Use a WaitGroup to track worker completion
 	var wg sync.WaitGroup
@@ -335,19 +523,25 @@ func processProjectsOptimized(ctx context.Context, projects []string, workers in
 	// Collect and process results as they come in
 	for result := range resultCh {
 		success := result.Error == nil
-		stats.recordResult(success, result.Duration)
+		stats.recordResult(success, result.Duration, len(result.Issues))
+		results = append(results, result)
 
 		if verbose || !success {
 			if success {
 				log.Printf("✓ %s (%.2fs)", result.Project, result.Duration.Seconds())
+				if len(result.Issues) > 0 {
+					log.Printf("  Found %d vulnerabilities", len(result.Issues))
+				}
 			} else {
 				log.Printf("✗ %s: %v (%.2fs)", result.Project, result.Error, result.Duration.Seconds())
 			}
 		}
 	}
+
+	return results
 }
 
-func optimizedWorker(ctx context.Context, projectCh <-chan string, resultCh chan<- Result, wg *sync.WaitGroup, verbose bool, workerId int) {
+func optimizedWorker(ctx context.Context, projectCh <-chan string, resultCh chan<- models.Result, wg *sync.WaitGroup, verbose bool, workerId int) {
 	defer wg.Done()
 
 	for {
@@ -364,12 +558,28 @@ func optimizedWorker(ctx context.Context, projectCh <-chan string, resultCh chan
 
 			startTime := time.Now()
 			err := fossa.RunAnalysis(project)
-			duration := time.Since(startTime)
 
-			resultCh <- Result{
-				Project:  project,
-				Error:    err,
-				Duration: duration,
+			// Get vulnerability data and FOSSA project link
+			issues := []models.VulnerabilityIssue{}
+			fossaLink := ""
+			depCount := 0
+
+			// If analysis was successful, check for vulnerabilities
+			if err == nil {
+				issues, fossaLink, depCount = getVulnerabilities(project)
+			}
+
+			duration := time.Since(startTime)
+			endTime := time.Now() // Record when the scan completed
+
+			resultCh <- models.Result{
+				Project:         project,
+				Error:           err,
+				Duration:        duration,
+				EndTime:         endTime,
+				Issues:          issues,
+				FossaLink:       fossaLink,
+				DependencyCount: depCount,
 			}
 
 		case <-ctx.Done():
@@ -380,4 +590,75 @@ func optimizedWorker(ctx context.Context, projectCh <-chan string, resultCh chan
 			return
 		}
 	}
+}
+
+// Function to get vulnerabilities from FOSSA API
+func getVulnerabilities(project string) ([]models.VulnerabilityIssue, string, int) {
+	// This function would normally query the FOSSA API
+	// For this example, I'm adding placeholder functionality
+	issues := []models.VulnerabilityIssue{}
+
+	// Get FOSSA project ID from mapping
+	fossaProjectId := mapping.GetFossaProjectID(project)
+	fossaEndpoint := mapping.GetFossaEndpoint()
+	fossaLink := fmt.Sprintf("%s/projects/%s", fossaEndpoint, fossaProjectId)
+
+	// Example API request to FOSSA
+	apiUrl := fmt.Sprintf("%s/api/projects/%s/issues", fossaEndpoint, fossaProjectId)
+	req, err := http.NewRequest("GET", apiUrl, nil)
+	if err != nil {
+		return issues, fossaLink, 0
+	}
+
+	apiKey := os.Getenv("FOSSA_API_KEY")
+	req.Header.Add("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return issues, fossaLink, 0
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return issues, fossaLink, 0
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return issues, fossaLink, 0
+	}
+
+	// Parse the response
+	var issuesResponse struct {
+		Issues []struct {
+			Name        string    `json:"name"`
+			Description string    `json:"description"`
+			Severity    string    `json:"severity"`
+			Link        string    `json:"link"`
+			CVE         string    `json:"cve"`
+			FirstSeen   time.Time `json:"firstSeen"`
+			FixedIn     string    `json:"fixedIn"`
+		} `json:"issues"`
+		Dependencies int `json:"dependencies"`
+	}
+
+	if err := json.Unmarshal(body, &issuesResponse); err != nil {
+		return issues, fossaLink, 0
+	}
+
+	// Convert to our issue format
+	for _, issue := range issuesResponse.Issues {
+		issues = append(issues, models.VulnerabilityIssue{
+			Name:        issue.Name,
+			Description: issue.Description,
+			Severity:    issue.Severity,
+			Link:        issue.Link,
+			CVE:         issue.CVE,
+			FirstSeen:   issue.FirstSeen,
+			FixedIn:     issue.FixedIn,
+		})
+	}
+
+	return issues, fossaLink, issuesResponse.Dependencies
 }
