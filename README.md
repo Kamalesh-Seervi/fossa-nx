@@ -9,6 +9,11 @@ A high-performance Go CLI tool for running FOSSA license scans on `NX monorepo p
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+  - [Basic Usage](#basic-usage)
+  - [Project-Specific Analysis](#project-specific-analysis)
+  - [Advanced Options](#advanced-options)
+  - [Notification Options](#notification-options)
+  - [Complete Usage Reference](#complete-usage-reference)
 - [Technical Architecture](#technical-architecture)
 - [Performance Optimization](#performance-optimization)
 - [Troubleshooting](#troubleshooting)
@@ -20,8 +25,10 @@ FOSSA-NX CLI is a developer-friendly tool designed to simplify running FOSSA lic
 - **Parallel Scanning**: Runs multiple FOSSA analyses simultaneously for dramatically faster results
 - **Affected Project Detection**: Scans only projects affected by your changes
 - **Full Repository Analysis**: Option to scan all projects in the monorepo
+- **Single Project Analysis**: Target a specific project for faster, focused analysis
 - **Configurable**: Use YAML configuration files for project and team mappings
 - **Performance Optimized**: Advanced caching and concurrency management
+- **Notification Support**: Email reports and GitHub issue creation for vulnerabilities
 
 ## Requirements
 
@@ -115,6 +122,19 @@ fossa-nx fossa --config=/path/to/config.yaml --all
 fossa-nx fossa --verbose --base=main --head=HEAD
 ```
 
+### Project-Specific Analysis
+
+```bash
+# Analyze a specific project
+fossa-nx fossa --project=@test/app1
+
+# Analyze multiple specific projects with a comma-separated list
+fossa-nx fossa --project=my-project1,my-project2,my-project3
+
+# Include unmapped projects in specific project analysis
+fossa-nx fossa --project=my-project1,my-project2 --include-unmapped
+```
+
 ### Advanced Options
 
 ```bash
@@ -128,6 +148,16 @@ fossa-nx fossa --all --timeout=60
 fossa-nx fossa --all --cpuprofile=cpu.prof --memprofile=mem.prof
 ```
 
+### Notification Options
+
+```bash
+# Send email report
+fossa-nx fossa --all --email=report@example.com
+
+# Create GitHub issue for vulnerabilities
+fossa-nx fossa --all --github-issue
+```
+
 ### Complete Usage Reference
 
 ```
@@ -135,17 +165,117 @@ Usage:
   fossa-nx fossa [flags]
 
 Flags:
-  -a, --all              Analyze all projects, not just affected ones
-      --base string      Base commit for comparison
-  -j, --concurrent int   Maximum number of concurrent FOSSA scans (default: number of CPUs)
-      --head string      Head commit for comparison
-  -t, --timeout int      Timeout in minutes for the entire operation (default 30)
-  -v, --verbose          Enable verbose logging
+  -a, --all                   Analyze all projects, not just affected ones
+      --base string           Base commit for comparison
+  -j, --concurrent int        Maximum number of concurrent FOSSA scans (default: number of CPUs)
+      --email                 Enable email notifications
+      --from-email string     Sender email address
+      --github                Enable GitHub issue creation
+      --github-api-url string GitHub API URL for Enterprise instances
+      --github-org string     GitHub organization
+      --github-repo string    GitHub repository
+      --github-token string   GitHub API token
+      --head string           Head commit for comparison
+      --include-unmapped      Include projects not defined in configuration
+  -p, --project string        Analyze a specific project by name
+      --smtp-password string  SMTP password
+      --smtp-port int         SMTP port for email notifications (default 587)
+      --smtp-server string    SMTP server for email notifications
+      --smtp-user string      SMTP username
+  -t, --timeout int           Timeout in minutes for the entire operation (default 30)
+      --to-email string       Recipient email addresses (comma-separated)
+  -v, --verbose               Enable verbose logging
 
 Global Flags:
-  -c, --config string     Path to config file
-      --cpuprofile string Write CPU profile to file
-      --memprofile string Write memory profile to file
+  -c, --config string        Path to config file
+      --cpuprofile string    Write CPU profile to file
+      --memprofile string    Write memory profile to file
+  -V, --version              Show version information
+```
+
+## Examples
+
+### Basic Workflow Examples
+
+```bash
+# Check version
+fossa-nx --version
+
+# Show help
+fossa-nx --help
+fossa-nx fossa --help
+
+# Analyze projects affected by your changes
+fossa-nx fossa --base=main --head=feature-branch
+
+# Analyze a specific project
+fossa-nx fossa --project=my-project
+
+# Analyze all projects
+fossa-nx fossa --all
+
+# Include projects not mapped in configuration
+fossa-nx fossa --all --include-unmapped
+```
+
+### Notification Examples
+
+```bash
+# Send email notifications
+fossa-nx fossa --all --email \
+  --smtp-server=smtp.example.com --smtp-port=587 \
+  --smtp-user=username --smtp-password=password \
+  --from-email=sender@example.com --to-email=recipient@example.com,team@example.com
+
+# Create GitHub issues for vulnerabilities
+fossa-nx fossa --all --github \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
+
+# For GitHub Enterprise
+fossa-nx fossa --all --github \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo \
+  --github-api-url=https://github.yourcompany.com/api/v3
+
+# Using both email and GitHub notifications together
+fossa-nx fossa --all --email --github \
+  --smtp-server=smtp.example.com --smtp-port=587 \
+  --smtp-user=username --smtp-password=password \
+  --from-email=sender@example.com --to-email=recipient@example.com \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
+```
+
+### Performance Tuning Examples
+
+```bash
+# Adjust concurrency
+fossa-nx fossa --all --concurrent=8
+
+# Set longer timeout (for large repositories)
+fossa-nx fossa --all --timeout=60  # 60 minutes
+
+# Generate performance profiles
+fossa-nx fossa --all --cpuprofile=cpu.prof --memprofile=mem.prof
+```
+
+### CI/CD Integration Examples
+
+```bash
+# Jenkins Pipeline
+stage('FOSSA Analysis') {
+  steps {
+    sh 'fossa-nx fossa --base=$GIT_PREVIOUS_COMMIT --head=$GIT_COMMIT --verbose'
+  }
+}
+
+# GitHub Actions workflow
+- name: Run FOSSA Analysis
+  run: |
+    fossa-nx fossa --base=${{ github.event.before }} --head=${{ github.sha }} --verbose
+
+# GitLab CI
+fossa-scan:
+  script:
+    - fossa-nx fossa --base=$CI_COMMIT_BEFORE_SHA --head=$CI_COMMIT_SHA --verbose
 ```
 
 ## Technical Architecture
