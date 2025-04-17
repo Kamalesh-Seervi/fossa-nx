@@ -2,7 +2,7 @@
 
 A high-performance Go CLI tool for running FOSSA license scans on `NX monorepo projects.`
 
-## Table of Contents
+## Table of Contents:
 
 - [Overview](#overview)
 - [Requirements](#requirements)
