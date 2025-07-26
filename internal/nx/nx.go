@@ -3,7 +3,6 @@ package nx
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,7 +43,7 @@ func GetProjects(base, head string, getAllProjects bool) ([]string, error) {
 		}
 
 		// Get all projects
-		cmd := exec.Command("nx", "show", "projects")
+		cmd := exec.Command("yarn", "nx", "show", "projects")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("failed to run nx command: %w\nOutput: %s", err, output)
@@ -73,7 +72,7 @@ func GetProjects(base, head string, getAllProjects bool) ([]string, error) {
 			args = append(args, fmt.Sprintf("--base=%s", base), fmt.Sprintf("--head=%s", head))
 		}
 
-		cmd := exec.Command("nx", args...)
+		cmd := exec.Command("yarn", append([]string{"nx"}, args...)...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("failed to run nx command: %w\nOutput: %s", err, output)
@@ -126,7 +125,7 @@ func GetProjectRoot(projectName string) (string, error) {
 // determineProjectRoot finds the project root using NX or fallback methods
 func determineProjectRoot(projectName string) (string, error) {
 	// Use NX CLI to directly get project info (most reliable)
-	cmd := exec.Command("nx", "show", "project", projectName, "--json")
+	cmd := exec.Command("yarn", "nx", "show", "project", projectName, "--json")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		var projectInfo map[string]interface{}
@@ -168,7 +167,7 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 	}
 
 	// Get project dependencies using nx show project
-	cmd := exec.Command("nx", "show", "project", projectName, "--with-deps", "--json")
+	cmd := exec.Command("yarn", "nx", "show", "project", projectName, "--with-deps", "--json")
 	depOutput, err := cmd.CombinedOutput()
 
 	if err != nil {
@@ -178,7 +177,7 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 			return "", fmt.Errorf("failed to serialize package.json: %w", err)
 		}
 
-		if err := ioutil.WriteFile(packageJsonPath, jsonData, 0644); err != nil {
+		if err := os.WriteFile(packageJsonPath, jsonData, 0644); err != nil {
 			return "", fmt.Errorf("failed to write package.json: %w", err)
 		}
 
@@ -202,7 +201,7 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 	}
 
 	// Check for existing package.json to merge with
-	if existingData, err := ioutil.ReadFile(packageJsonPath); err == nil {
+	if existingData, err := os.ReadFile(packageJsonPath); err == nil {
 		var existingPackage map[string]interface{}
 		if err := json.Unmarshal(existingData, &existingPackage); err == nil {
 			// Merge properties (except dependencies which we handle specially)
@@ -229,7 +228,7 @@ func CreateTemporaryPackageJson(projectName, projectRoot string) (string, error)
 		return "", fmt.Errorf("failed to serialize package.json: %w", err)
 	}
 
-	if err := ioutil.WriteFile(packageJsonPath, jsonData, 0644); err != nil {
+	if err := os.WriteFile(packageJsonPath, jsonData, 0644); err != nil {
 		return "", fmt.Errorf("failed to write package.json: %w", err)
 	}
 
