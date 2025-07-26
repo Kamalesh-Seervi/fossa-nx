@@ -29,7 +29,7 @@ FOSSA-NX CLI is a developer-friendly tool designed to simplify running FOSSA lic
 - **Single Project Analysis**: Target a specific project for faster, focused analysis
 - **Configurable**: Use YAML configuration files for project and team mappings
 - **Performance Optimized**: Advanced caching and concurrency management
-- **Notification Support**: Email reports and GitHub issue creation for vulnerabilities, plus commit status checks
+- **Notification Support**: Email reports, GitHub commit status checks, and optional GitHub issue creation for vulnerabilities
 
 ## Requirements
 
@@ -153,10 +153,22 @@ fossa-nx --all --cpuprofile=cpu.prof --memprofile=mem.prof
 
 ```bash
 # Send email report
-fossa-nx --all --email=report@example.com
+fossa-nx --all --email \
+  --smtp-server=smtp.example.com --smtp-port=587 \
+  --smtp-user=username --smtp-password=password \
+  --from-email=sender@example.com --to-email=recipient@example.com
 
-# Create GitHub issue for vulnerabilities
-fossa-nx --all --github-issue
+# Enable GitHub commit status checks (PR status indicators)
+fossa-nx --all --github \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
+
+# Enable GitHub vulnerability issue creation
+fossa-nx --all --github-issues \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
+
+# Enable both GitHub commit status AND issue creation
+fossa-nx --all --github --github-issues \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
 ```
 
 ### Complete Usage Reference
@@ -171,8 +183,9 @@ Flags:
   -j, --concurrent int        Maximum number of concurrent FOSSA scans (default: number of CPUs)
       --email                 Enable email notifications
       --from-email string     Sender email address
-      --github                Enable GitHub issue creation
+      --github                Enable GitHub integration (commit status)
       --github-api-url string GitHub API URL for Enterprise instances
+      --github-issues         Enable GitHub vulnerability issue creation
       --github-org string     GitHub organization
       --github-repo string    GitHub repository
       --github-token string   GitHub API token
@@ -228,24 +241,35 @@ fossa-nx --all --email \
   --smtp-user=username --smtp-password=password \
   --from-email=sender@example.com --to-email=recipient@example.com,team@example.com
 
-# Create GitHub issues for vulnerabilities
+# Enable GitHub commit status checks only (shows PR status indicators)
 fossa-nx --all --github \
   --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
 
+# Enable GitHub vulnerability issue creation only
+fossa-nx --all --github-issues \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
+
+# Enable both GitHub commit status AND vulnerability issue creation
+fossa-nx --all --github --github-issues \
+  --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
+
 # For GitHub Enterprise
-fossa-nx --all --github \
+fossa-nx --all --github --github-issues \
   --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo \
   --github-api-url=https://github.yourcompany.com/api/v3
 
-# Note: GitHub integration automatically creates:
-# 1. Issues for each vulnerability found
-# 2. Commit status checks showing scan results (success/failure)
-#    - Status context: ci/fossa-{project-name}
-#    - Success: No vulnerabilities found
-#    - Failure: Vulnerabilities found or scan errors
+# Note: GitHub integration provides:
+# --github flag: Commit status checks showing scan results (success/failure)
+#   - Status context: ci/fossa-{project-name}
+#   - Success: No vulnerabilities found
+#   - Failure: Vulnerabilities found or scan errors
+# --github-issues flag: Individual issues for each vulnerability found
+#   - Detailed vulnerability information
+#   - Severity-based labels
+#   - Links to FOSSA dashboard
 
-# Using both email and GitHub notifications together
-fossa-nx fossa --all --email --github \
+# Using email, GitHub status, and GitHub issues together
+fossa-nx --all --email --github --github-issues \
   --smtp-server=smtp.example.com --smtp-port=587 \
   --smtp-user=username --smtp-password=password \
   --from-email=sender@example.com --to-email=recipient@example.com \
@@ -268,7 +292,7 @@ fossa-nx --all --cpuprofile=cpu.prof --memprofile=mem.prof
 ### CI/CD Integration Examples
 
 ```bash
-# Jenkins Pipeline - with smart change detection
+# Jenkins Pipeline - with smart change detection and commit status
 stage('FOSSA Analysis') {
   steps {
     sh '''
@@ -286,16 +310,16 @@ stage('FOSSA Analysis') {
       --github-org=${{ github.repository_owner }} \
       --github-repo=${{ github.event.repository.name }}
 
-# GitLab CI - analyze only changed projects
+# GitLab CI - analyze only changed projects with issue creation
 fossa-analysis:
   script:
     - |
       fossa-nx --base=$CI_MERGE_REQUEST_TARGET_BRANCH_SHA --head=$CI_COMMIT_SHA \
-        --concurrent=3 --github --github-token=$GITHUB_TOKEN \
+        --concurrent=3 --github --github-issues --github-token=$GITHUB_TOKEN \
         --github-org=your-org --github-repo=your-repo
 
-# Disable smart change detection for full repository scan
-fossa-nx --all --smart-changes=false --github \
+# Disable smart change detection for full repository scan with both status and issues
+fossa-nx --all --smart-changes=false --github --github-issues \
   --github-token=$GITHUB_TOKEN --github-org=your-org --github-repo=your-repo
 ```
 
@@ -483,7 +507,8 @@ This opens a web interface on port 8080 where you can explore:
 
 - **🚀 Smart Change Detection**: Only analyze projects with actual file changes (enabled by default)
 - **⚡ Simplified CLI**: Removed redundant `fossa` subcommand for cleaner usage
-- **✅ GitHub Commit Status**: Automatic commit status checks alongside issue creation
+- **✅ GitHub Commit Status**: Automatic commit status checks for PR integration
+- **🐛 GitHub Issue Control**: Optional vulnerability issue creation with `--github-issues` flag
 - **🔧 Enhanced CI/CD**: Perfect integration with modern CI/CD pipelines
 
 ### 📖 **Migration Guide**
@@ -495,16 +520,28 @@ fossa-nx fossa --all --github --github-token=TOKEN --github-org=org --github-rep
 
 **New Command Structure:**
 ```bash
+# Just commit status (PR checks)
 fossa-nx --all --github --github-token=TOKEN --github-org=org --github-repo=repo
+
+# Just vulnerability issues
+fossa-nx --all --github-issues --github-token=TOKEN --github-org=org --github-repo=repo
+
+# Both commit status AND vulnerability issues
+fossa-nx --all --github --github-issues --github-token=TOKEN --github-org=org --github-repo=repo
 ```
 
-All existing functionality remains the same, just with a cleaner command structure!
+All existing functionality remains the same, just with a cleaner command structure and more control!
 
 ---
 
-**🎯 Ready to get started?** Use the new smart change detection for faster CI/CD:
+**🎯 Ready to get started?** Use the new smart change detection with flexible GitHub integration:
 
 ```bash
+# For CI/CD with commit status only
 fossa-nx --base=main --head=HEAD --concurrent=5 --github \
+  --github-token=$GITHUB_TOKEN --github-org=your-org --github-repo=your-repo
+
+# For full monitoring with both status and issue creation
+fossa-nx --base=main --head=HEAD --concurrent=5 --github --github-issues \
   --github-token=$GITHUB_TOKEN --github-org=your-org --github-repo=your-repo
 ```
