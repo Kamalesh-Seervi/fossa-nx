@@ -45,6 +45,7 @@ type GitHubConfig struct {
 	Repository   string
 	ApiUrl       string // GitHub API URL for Enterprise instances
 	Enabled      bool
+	CreateIssues bool // Enable/disable vulnerability issue creation
 }
 
 // FossaConfig holds all FOSSA-related configuration
