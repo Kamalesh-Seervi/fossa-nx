@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -176,49 +176,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "fossa-nx",
 		Short: "High-performance FOSSA license scanning for NX monorepos",
-		Long:  `A CLI tool to help developers run FOSSA license analysis efficiently on NX monorepo projects.`,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			// Set config path if provided
-			if configPath != "" {
-				os.Setenv("FOSSA_CONFIG_PATH", configPath)
-			}
-
-			// CPU profiling if requested
-			if cpuProfile != "" {
-				f, err := os.Create(cpuProfile)
-				if err != nil {
-					log.Fatalf("Could not create CPU profile: %v", err)
-				}
-				if err := pprof.StartCPUProfile(f); err != nil {
-					log.Fatalf("Could not start CPU profile: %v", err)
-				}
-			}
-		},
-		PersistentPostRun: func(cmd *cobra.Command, args []string) {
-			// Stop CPU profiling if active
-			if cpuProfile != "" {
-				pprof.StopCPUProfile()
-			}
-
-			// Memory profiling if requested
-			if memProfile != "" {
-				f, err := os.Create(memProfile)
-				if err != nil {
-					log.Fatalf("Could not create memory profile: %v", err)
-				}
-				runtime.GC() // Get up-to-date statistics
-				if err := pprof.WriteHeapProfile(f); err != nil {
-					log.Fatalf("Could not write memory profile: %v", err)
-				}
-				f.Close()
-			}
-		},
-	}
-
-	fossaCmd := &cobra.Command{
-		Use:   "fossa",
-		Short: "Run FOSSA analysis on NX projects",
-		Long: `Run FOSSA analysis on NX projects.
+		Long: `A CLI tool to help developers run FOSSA license analysis efficiently on NX monorepo projects.
         
 By default, only affected projects that are mapped in the configuration are analyzed.
 Use the --all flag to analyze all mapped projects.
@@ -226,10 +184,10 @@ Use the --include-unmapped flag to include projects not defined in configuration
 Use the --project flag to analyze a specific project by name.
 
 Examples:
-  fossa-nx fossa --base=develop --head=feature-branch  # Analyze affected mapped projects
-  fossa-nx fossa --all                                # Analyze all mapped projects
-  fossa-nx fossa --all --include-unmapped             # Analyze all projects, even unmapped ones
-  fossa-nx fossa --project=my-app                     # Analyze a specific project
+  fossa-nx --base=develop --head=feature-branch  # Analyze affected mapped projects
+  fossa-nx --all                                # Analyze all mapped projects
+  fossa-nx --all --include-unmapped             # Analyze all projects, even unmapped ones
+  fossa-nx --project=my-app                     # Analyze a specific project
 `,
 		Run: func(cmd *cobra.Command, args []string) {
 			if verboseLogging {
@@ -438,6 +396,10 @@ Examples:
 				if err := github.CreateIssues(results, githubConfig, verboseLogging); err != nil {
 					log.Printf("Error creating GitHub issues: %v", err)
 				}
+				// Create commit status check
+				if err := github.CreateCommitStatus(results, githubConfig, verboseLogging); err != nil {
+					log.Printf("Error creating GitHub commit status: %v", err)
+				}
 			}
 
 			// Exit with error if any projects failed
@@ -445,39 +407,75 @@ Examples:
 				os.Exit(1)
 			}
 		},
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			// Set config path if provided
+			if configPath != "" {
+				os.Setenv("FOSSA_CONFIG_PATH", configPath)
+			}
+
+			// CPU profiling if requested
+			if cpuProfile != "" {
+				f, err := os.Create(cpuProfile)
+				if err != nil {
+					log.Fatalf("Could not create CPU profile: %v", err)
+				}
+				if err := pprof.StartCPUProfile(f); err != nil {
+					log.Fatalf("Could not start CPU profile: %v", err)
+				}
+			}
+		},
+		PersistentPostRun: func(cmd *cobra.Command, args []string) {
+			// Stop CPU profiling if active
+			if cpuProfile != "" {
+				pprof.StopCPUProfile()
+			}
+
+			// Memory profiling if requested
+			if memProfile != "" {
+				f, err := os.Create(memProfile)
+				if err != nil {
+					log.Fatalf("Could not create memory profile: %v", err)
+				}
+				runtime.GC() // Get up-to-date statistics
+				if err := pprof.WriteHeapProfile(f); err != nil {
+					log.Fatalf("Could not write memory profile: %v", err)
+				}
+				f.Close()
+			}
+		},
 	}
 
+	// Root command flags
+	rootCmd.Flags().StringVar(&base, "base", "", "Base commit for comparison")
+	rootCmd.Flags().StringVar(&head, "head", "", "Head commit for comparison")
+	rootCmd.Flags().BoolVarP(&verboseLogging, "verbose", "v", false, "Enable verbose logging")
+	rootCmd.Flags().IntVarP(&maxConcurrent, "concurrent", "j", 0, "Maximum number of concurrent FOSSA scans (default: number of CPUs)")
+	rootCmd.Flags().IntVarP(&timeout, "timeout", "t", 30, "Timeout in minutes for the entire operation")
+	rootCmd.Flags().BoolVarP(&allProjects, "all", "a", false, "Analyze all projects, not just affected ones")
+	rootCmd.Flags().BoolVar(&includeUnmapped, "include-unmapped", false, "Include projects not defined in configuration")
+	rootCmd.Flags().StringVarP(&projectName, "project", "p", "", "Analyze a specific project by name")
+
+	// Email notification flags
+	rootCmd.Flags().BoolVar(&emailEnabled, "email", false, "Enable email notifications")
+	rootCmd.Flags().StringVar(&smtpServer, "smtp-server", "", "SMTP server for email notifications")
+	rootCmd.Flags().IntVar(&smtpPort, "smtp-port", 587, "SMTP port for email notifications")
+	rootCmd.Flags().StringVar(&smtpUser, "smtp-user", "", "SMTP username")
+	rootCmd.Flags().StringVar(&smtpPassword, "smtp-password", "", "SMTP password")
+	rootCmd.Flags().StringVar(&fromEmail, "from-email", "", "Sender email address")
+	rootCmd.Flags().StringVar(&toEmails, "to-email", "", "Recipient email addresses (comma-separated)")
+
+	// GitHub integration flags
+	rootCmd.Flags().BoolVar(&githubEnabled, "github", false, "Enable GitHub issue creation")
+	rootCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub API token")
+	rootCmd.Flags().StringVar(&githubOrg, "github-org", "", "GitHub organization")
+	rootCmd.Flags().StringVar(&githubRepo, "github-repo", "", "GitHub repository")
+	rootCmd.Flags().StringVar(&githubApiUrl, "github-api-url", "", "GitHub API URL for Enterprise instances")
+
+	// Persistent flags
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Path to config file")
 	rootCmd.PersistentFlags().StringVar(&cpuProfile, "cpuprofile", "", "Write CPU profile to file")
 	rootCmd.PersistentFlags().StringVar(&memProfile, "memprofile", "", "Write memory profile to file")
 	rootCmd.PersistentFlags().BoolP("version", "V", false, "Show version information")
-
-	fossaCmd.Flags().StringVar(&base, "base", "", "Base commit for comparison")
-	fossaCmd.Flags().StringVar(&head, "head", "", "Head commit for comparison")
-	fossaCmd.Flags().BoolVarP(&verboseLogging, "verbose", "v", false, "Enable verbose logging")
-	fossaCmd.Flags().IntVarP(&maxConcurrent, "concurrent", "j", 0, "Maximum number of concurrent FOSSA scans (default: number of CPUs)")
-	fossaCmd.Flags().IntVarP(&timeout, "timeout", "t", 30, "Timeout in minutes for the entire operation")
-	fossaCmd.Flags().BoolVarP(&allProjects, "all", "a", false, "Analyze all projects, not just affected ones")
-	fossaCmd.Flags().BoolVar(&includeUnmapped, "include-unmapped", false, "Include projects not defined in configuration")
-	fossaCmd.Flags().StringVarP(&projectName, "project", "p", "", "Analyze a specific project by name")
-
-	// Email notification flags
-	fossaCmd.Flags().BoolVar(&emailEnabled, "email", false, "Enable email notifications")
-	fossaCmd.Flags().StringVar(&smtpServer, "smtp-server", "", "SMTP server for email notifications")
-	fossaCmd.Flags().IntVar(&smtpPort, "smtp-port", 587, "SMTP port for email notifications")
-	fossaCmd.Flags().StringVar(&smtpUser, "smtp-user", "", "SMTP username")
-	fossaCmd.Flags().StringVar(&smtpPassword, "smtp-password", "", "SMTP password")
-	fossaCmd.Flags().StringVar(&fromEmail, "from-email", "", "Sender email address")
-	fossaCmd.Flags().StringVar(&toEmails, "to-email", "", "Recipient email addresses (comma-separated)")
-
-	// GitHub integration flags
-	fossaCmd.Flags().BoolVar(&githubEnabled, "github", false, "Enable GitHub issue creation")
-	fossaCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub API token")
-	fossaCmd.Flags().StringVar(&githubOrg, "github-org", "", "GitHub organization")
-	fossaCmd.Flags().StringVar(&githubRepo, "github-repo", "", "GitHub repository")
-	fossaCmd.Flags().StringVar(&githubApiUrl, "github-api-url", "", "GitHub API URL for Enterprise instances")
-
-	rootCmd.AddCommand(fossaCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -508,16 +506,16 @@ func processProjectsOptimized(ctx context.Context, projects []string, workers in
 
 	// Send projects to workers
 	go func() {
+		defer close(projectCh)
 		for _, project := range projects {
 			select {
 			case projectCh <- project:
 				// Project sent successfully
 			case <-ctx.Done():
 				// Context canceled, stop sending projects
-				break
+				return
 			}
 		}
-		close(projectCh)
 	}()
 
 	// Collect and process results as they come in
@@ -624,7 +622,7 @@ func getVulnerabilities(project string) ([]models.VulnerabilityIssue, string, in
 		return issues, fossaLink, 0
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return issues, fossaLink, 0
 	}
