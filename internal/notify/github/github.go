@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/go-github/v71/github"
+	"github.com/kamalesh-seervi/fossa-nx/internal/git"
 	"github.com/kamalesh-seervi/fossa-nx/internal/models"
 	"golang.org/x/oauth2"
 )
@@ -172,6 +173,94 @@ func CreateIssues(results []models.Result, config models.GitHubConfig, verbose b
 
 	if verbose {
 		log.Printf("Created %d GitHub issues", issuesCreated)
+	}
+
+	return nil
+}
+
+// CreateCommitStatus creates a commit status check for FOSSA scan results
+func CreateCommitStatus(results []models.Result, config models.GitHubConfig, verbose bool) error {
+	if !config.Enabled {
+		return nil
+	}
+
+	// Get current git commit hash
+	commitHash, err := git.GetCommitHash()
+	if err != nil || commitHash == "" {
+		if verbose {
+			log.Printf("Could not get git commit hash, skipping commit status update: %v", err)
+		}
+		return nil
+	}
+
+	// Create GitHub client
+	ctx := context.Background()
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: config.Token},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	client := github.NewClient(tc)
+
+	// Configure Enterprise GitHub URL if provided
+	if config.ApiUrl != "" {
+		baseURL, err := url.Parse(config.ApiUrl + "/")
+		if err != nil {
+			return fmt.Errorf("invalid GitHub API URL: %v", err)
+		}
+		client.BaseURL = baseURL
+		client.UploadURL = baseURL
+	}
+
+	// Determine overall status based on scan results
+	var totalVulnerabilities int
+	var failedScans int
+	var projectNames []string
+
+	for _, result := range results {
+		projectNames = append(projectNames, result.Project)
+		if result.Error != nil {
+			failedScans++
+		} else {
+			totalVulnerabilities += len(result.Issues)
+		}
+	}
+
+	// Escape project names for use in status context
+	escapedProjectName := strings.Join(projectNames, "-")
+	escapedProjectName = strings.ReplaceAll(escapedProjectName, " ", "-")
+	escapedProjectName = strings.ReplaceAll(escapedProjectName, "/", "-")
+
+	// Determine status state and description
+	var state string
+	var description string
+	context := fmt.Sprintf("ci/fossa-%s", escapedProjectName)
+
+	if failedScans > 0 {
+		state = "failure"
+		description = fmt.Sprintf("FOSSA scan failed for %d project(s)", failedScans)
+	} else if totalVulnerabilities > 0 {
+		state = "failure"
+		description = fmt.Sprintf("FOSSA found %d vulnerabilities", totalVulnerabilities)
+	} else {
+		state = "success"
+		description = fmt.Sprintf("FOSSA scan passed for project %s", escapedProjectName)
+	}
+
+	// Create status request
+	status := &github.RepoStatus{
+		State:       github.Ptr(state),
+		Description: github.Ptr(description),
+		Context:     github.Ptr(context),
+	}
+
+	// Create the commit status
+	_, _, err = client.Repositories.CreateStatus(ctx, config.Organization, config.Repository, commitHash, status)
+	if err != nil {
+		return fmt.Errorf("error creating commit status: %v", err)
+	}
+
+	if verbose {
+		log.Printf("Created commit status: %s - %s (commit: %s)", state, description, commitHash[:8])
 	}
 
 	return nil
