@@ -20,6 +20,14 @@ func CreateIssues(results []models.Result, config models.GitHubConfig, verbose b
 		return nil
 	}
 
+	// Check if issue creation is disabled
+	if !config.CreateIssues {
+		if verbose {
+			log.Println("GitHub issue creation is disabled, skipping vulnerability issue creation")
+		}
+		return nil
+	}
+
 	// Count total vulnerabilities
 	var totalIssues int
 	for _, result := range results {
@@ -77,27 +85,9 @@ func CreateIssues(results []models.Result, config models.GitHubConfig, verbose b
 
 		// Create issues for each vulnerability
 		for _, vuln := range result.Issues {
-			// Check if issue already exists by searching for title
+			// Create issue title
 			issueTitle := fmt.Sprintf("[FOSSA] %s: %s vulnerability in %s",
 				vuln.Severity, vuln.Name, result.Project)
-
-			// Skip duplicate issues by searching existing ones
-			query := fmt.Sprintf("repo:%s/%s is:issue is:open in:title %s",
-				config.Organization, config.Repository, vuln.Name)
-
-			searchResult, _, err := client.Search.Issues(ctx, query, nil)
-			if err != nil {
-				log.Printf("Error searching for existing issues: %v", err)
-				continue
-			}
-
-			// Skip if issue already exists
-			if searchResult.GetTotal() > 0 {
-				if verbose {
-					log.Printf("Skipping duplicate issue: %s", issueTitle)
-				}
-				continue
-			}
 
 			// Create issue with detailed information
 			var cveInfo string
@@ -158,7 +148,7 @@ func CreateIssues(results []models.Result, config models.GitHubConfig, verbose b
 				Labels: &labels,
 			}
 
-			_, _, err = client.Issues.Create(ctx, config.Organization, config.Repository, issue)
+			_, _, err := client.Issues.Create(ctx, config.Organization, config.Repository, issue)
 			if err != nil {
 				log.Printf("Error creating GitHub issue: %v", err)
 				continue
@@ -215,11 +205,13 @@ func CreateCommitStatus(results []models.Result, config models.GitHubConfig, ver
 	var totalVulnerabilities int
 	var failedScans int
 	var projectNames []string
+	var failedProjects []string
 
 	for _, result := range results {
 		projectNames = append(projectNames, result.Project)
 		if result.Error != nil {
 			failedScans++
+			failedProjects = append(failedProjects, result.Project)
 		} else {
 			totalVulnerabilities += len(result.Issues)
 		}
@@ -250,10 +242,32 @@ func CreateCommitStatus(results []models.Result, config models.GitHubConfig, ver
 
 	if failedScans > 0 {
 		state = "failure"
-		description = fmt.Sprintf("FOSSA scan failed for %d project(s)", failedScans)
+		if len(failedProjects) == 1 {
+			appName := failedProjects[0]
+			if len(appName) > 80 { // Leave room for prefix text
+				appName = appName[:80] + "..."
+			}
+			description = fmt.Sprintf("FOSSA scan failed for %s", appName)
+		} else {
+			// Show first few failed projects if space allows
+			failedList := strings.Join(failedProjects, ", ")
+			if len(failedList) > 100 {
+				description = fmt.Sprintf("FOSSA scan failed for %d projects", len(failedProjects))
+			} else {
+				description = fmt.Sprintf("FOSSA scan failed: %s", failedList)
+			}
+		}
 	} else if totalVulnerabilities > 0 {
 		state = "failure"
-		description = fmt.Sprintf("FOSSA found %d vulnerabilities", totalVulnerabilities)
+		if len(projectNames) == 1 {
+			appName := projectNames[0]
+			if len(appName) > 70 { // Leave room for vulnerability count
+				appName = appName[:70] + "..."
+			}
+			description = fmt.Sprintf("FOSSA: %d vuln(s) in %s", totalVulnerabilities, appName)
+		} else {
+			description = fmt.Sprintf("FOSSA found %d vulnerabilities across %d projects", totalVulnerabilities, len(projectNames))
+		}
 	} else {
 		state = "success"
 		if len(projectNames) == 1 {
