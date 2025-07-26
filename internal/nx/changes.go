@@ -101,12 +101,12 @@ func GetProjectGraph() (map[string]ProjectNode, error) {
 		}()
 
 		// Try nx command first (newer versions)
-		cmd := exec.Command("nx", "graph", fmt.Sprintf("--file=%s", tempFile.Name()), "--format=json")
+		cmd := exec.Command("yarn", "nx", "graph", fmt.Sprintf("--file=%s", tempFile.Name()), "--format=json")
 		cmdErr := cmd.Run()
 
 		if cmdErr != nil {
 			// Fallback to older nx command
-			cmd = exec.Command("nx", "dep-graph", fmt.Sprintf("--file=%s", tempFile.Name()), "--format=json")
+			cmd = exec.Command("yarn", "nx", "dep-graph", fmt.Sprintf("--file=%s", tempFile.Name()), "--format=json")
 			cmdErr = cmd.Run()
 
 			if cmdErr != nil {
