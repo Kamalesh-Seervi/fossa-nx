@@ -28,7 +28,7 @@ FOSSA-NX CLI is a developer-friendly tool designed to simplify running FOSSA lic
 - **Single Project Analysis**: Target a specific project for faster, focused analysis
 - **Configurable**: Use YAML configuration files for project and team mappings
 - **Performance Optimized**: Advanced caching and concurrency management
-- **Notification Support**: Email reports and GitHub issue creation for vulnerabilities
+- **Notification Support**: Email reports and GitHub issue creation for vulnerabilities, plus commit status checks
 
 ## Requirements
 
@@ -110,59 +110,59 @@ fossa:
 
 ```bash
 # Analyze projects affected by changes between commits
-fossa-nx fossa --base=develop --head=feature-branch
+fossa-nx --base=develop --head=feature-branch
 
 # Analyze all projects in the repository
-fossa-nx fossa --all
+fossa-nx --all
 
 # Use a specific config file
-fossa-nx fossa --config=/path/to/config.yaml --all
+fossa-nx --config=/path/to/config.yaml --all
 
 # Increase verbosity
-fossa-nx fossa --verbose --base=main --head=HEAD
+fossa-nx --verbose --base=main --head=HEAD
 ```
 
 ### Project-Specific Analysis
 
 ```bash
 # Analyze a specific project
-fossa-nx fossa --project=@test/app1
+fossa-nx --project=@test/app1
 
 # Analyze multiple specific projects with a comma-separated list
-fossa-nx fossa --project=my-project1,my-project2,my-project3
+fossa-nx --project=my-project1,my-project2,my-project3
 
 # Include unmapped projects in specific project analysis
-fossa-nx fossa --project=my-project1,my-project2 --include-unmapped
+fossa-nx --project=my-project1,my-project2 --include-unmapped
 ```
 
 ### Advanced Options
 
 ```bash
 # Change the number of concurrent scans (default: number of CPU cores)
-fossa-nx fossa --all --concurrent=16
+fossa-nx --all --concurrent=16
 
 # Set a custom timeout (default: 30 minutes)
-fossa-nx fossa --all --timeout=60
+fossa-nx --all --timeout=60
 
 # Performance profiling
-fossa-nx fossa --all --cpuprofile=cpu.prof --memprofile=mem.prof
+fossa-nx --all --cpuprofile=cpu.prof --memprofile=mem.prof
 ```
 
 ### Notification Options
 
 ```bash
 # Send email report
-fossa-nx fossa --all --email=report@example.com
+fossa-nx --all --email=report@example.com
 
 # Create GitHub issue for vulnerabilities
-fossa-nx fossa --all --github-issue
+fossa-nx --all --github-issue
 ```
 
 ### Complete Usage Reference
 
 ```
 Usage:
-  fossa-nx fossa [flags]
+  fossa-nx [flags]
 
 Flags:
   -a, --all                   Analyze all projects, not just affected ones
@@ -203,38 +203,44 @@ fossa-nx --version
 
 # Show help
 fossa-nx --help
-fossa-nx fossa --help
 
 # Analyze projects affected by your changes
-fossa-nx fossa --base=main --head=feature-branch
+fossa-nx --base=main --head=feature-branch
 
 # Analyze a specific project
-fossa-nx fossa --project=my-project
+fossa-nx --project=my-project
 
 # Analyze all projects
-fossa-nx fossa --all
+fossa-nx --all
 
 # Include projects not mapped in configuration
-fossa-nx fossa --all --include-unmapped
+fossa-nx --all --include-unmapped
 ```
 
 ### Notification Examples
 
 ```bash
 # Send email notifications
-fossa-nx fossa --all --email \
+fossa-nx --all --email \
   --smtp-server=smtp.example.com --smtp-port=587 \
   --smtp-user=username --smtp-password=password \
   --from-email=sender@example.com --to-email=recipient@example.com,team@example.com
 
 # Create GitHub issues for vulnerabilities
-fossa-nx fossa --all --github \
+fossa-nx --all --github \
   --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo
 
 # For GitHub Enterprise
-fossa-nx fossa --all --github \
+fossa-nx --all --github \
   --github-token=YOUR_TOKEN --github-org=your-org --github-repo=your-repo \
   --github-api-url=https://github.yourcompany.com/api/v3
+
+# Note: GitHub integration automatically creates:
+# 1. Issues for each vulnerability found
+# 2. Commit status checks showing scan results (success/failure)
+#    - Status context: ci/fossa-{project-name}
+#    - Success: No vulnerabilities found
+#    - Failure: Vulnerabilities found or scan errors
 
 # Using both email and GitHub notifications together
 fossa-nx fossa --all --email --github \
@@ -248,13 +254,13 @@ fossa-nx fossa --all --email --github \
 
 ```bash
 # Adjust concurrency
-fossa-nx fossa --all --concurrent=8
+fossa-nx --all --concurrent=8
 
 # Set longer timeout (for large repositories)
-fossa-nx fossa --all --timeout=60  # 60 minutes
+fossa-nx --all --timeout=60  # 60 minutes
 
 # Generate performance profiles
-fossa-nx fossa --all --cpuprofile=cpu.prof --memprofile=mem.prof
+fossa-nx --all --cpuprofile=cpu.prof --memprofile=mem.prof
 ```
 
 ### CI/CD Integration Examples
