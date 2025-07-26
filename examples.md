@@ -106,7 +106,29 @@ fossa-nx --base=develop --head=$GITHUB_SHA --concurrent=5 --verbose --github \
   --github-org=your-org \
   --github-repo=your-repo \
   --github-api-url=https://github.yourcompany.com/api/v3
+
+# Disable smart change detection (analyze all projects regardless of changes)
+fossa-nx --base=main --head=HEAD --smart-changes=false --github \
+  --github-token=$GITHUB_TOKEN \
+  --github-org=your-org \
+  --github-repo=your-repo
 ```
+
+### Smart Change Detection 🚀
+
+**NEW FEATURE**: By default, fossa-nx now includes smart change detection that only analyzes projects with actual file changes, similar to how NX handles affected projects.
+
+**Key Benefits:**
+- ⚡ **Faster CI/CD**: Skips unchanged projects automatically
+- 💰 **Cost Savings**: Reduces unnecessary FOSSA API calls
+- 🎯 **Relevant Results**: Focus on projects that actually changed
+- 🔧 **Configurable**: Can be disabled with `--smart-changes=false`
+
+**How It Works:**
+1. Compares files between `--base` and `--head` commits
+2. Maps changed files to affected NX projects using project graph
+3. Only runs FOSSA scans on projects with changes
+4. Skipped projects show as successful with 0 vulnerabilities
 
 ### What Happens When This Runs:
 
