@@ -35,9 +35,11 @@ func GetChangedFiles(base, head string) ([]string, error) {
 	cacheKey := fmt.Sprintf("%s..%s", base, head)
 
 	// Use cached result if available for the same commit range
-	changedFilesOnce.Do(func() {
+	// Dynamically update the cache key and cache
+	if changedFilesCacheKey != cacheKey {
+		changedFilesCache = nil // Clear the cache if the key changes
 		changedFilesCacheKey = cacheKey
-	})
+	}
 
 	if changedFilesCacheKey == cacheKey && len(changedFilesCache) > 0 {
 		return changedFilesCache, nil
