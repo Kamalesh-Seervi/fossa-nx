@@ -23,6 +23,7 @@ A high-performance Go CLI tool for running FOSSA license scans on `NX monorepo p
 FOSSA-NX CLI is a developer-friendly tool designed to simplify running FOSSA license analysis on projects in an NX monorepo. Key features include:
 
 - **Parallel Scanning**: Runs multiple FOSSA analyses simultaneously for dramatically faster results
+- **Smart Change Detection**: Only analyzes projects with actual file changes (configurable)
 - **Affected Project Detection**: Scans only projects affected by your changes
 - **Full Repository Analysis**: Option to scan all projects in the monorepo
 - **Single Project Analysis**: Target a specific project for faster, focused analysis
@@ -178,6 +179,7 @@ Flags:
       --head string           Head commit for comparison
       --include-unmapped      Include projects not defined in configuration
   -p, --project string        Analyze a specific project by name
+      --smart-changes         Only analyze projects with file changes (default: true)
       --smtp-password string  SMTP password
       --smtp-port int         SMTP port for email notifications (default 587)
       --smtp-server string    SMTP server for email notifications
@@ -266,17 +268,36 @@ fossa-nx --all --cpuprofile=cpu.prof --memprofile=mem.prof
 ### CI/CD Integration Examples
 
 ```bash
-# Jenkins Pipeline
+# Jenkins Pipeline - with smart change detection
 stage('FOSSA Analysis') {
   steps {
-    sh 'fossa-nx fossa --base=$GIT_PREVIOUS_COMMIT --head=$GIT_COMMIT --verbose'
+    sh '''
+      fossa-nx --base=$GIT_PREVIOUS_COMMIT --head=$GIT_COMMIT --verbose --github \
+        --github-token=$GITHUB_TOKEN --github-org=your-org --github-repo=your-repo
+    '''
   }
 }
 
-# GitHub Actions workflow
+# GitHub Actions workflow - with smart change detection and commit status
 - name: Run FOSSA Analysis
   run: |
-    fossa-nx fossa --base=${{ github.event.before }} --head=${{ github.sha }} --verbose
+    fossa-nx --base=${{ github.event.before }} --head=${{ github.sha }} --verbose --github \
+      --github-token=${{ secrets.GITHUB_TOKEN }} \
+      --github-org=${{ github.repository_owner }} \
+      --github-repo=${{ github.event.repository.name }}
+
+# GitLab CI - analyze only changed projects
+fossa-analysis:
+  script:
+    - |
+      fossa-nx --base=$CI_MERGE_REQUEST_TARGET_BRANCH_SHA --head=$CI_COMMIT_SHA \
+        --concurrent=3 --github --github-token=$GITHUB_TOKEN \
+        --github-org=your-org --github-repo=your-repo
+
+# Disable smart change detection for full repository scan
+fossa-nx --all --smart-changes=false --github \
+  --github-token=$GITHUB_TOKEN --github-org=your-org --github-repo=your-repo
+```
 
 # GitLab CI
 fossa-scan:
@@ -452,3 +473,38 @@ For advanced debugging:
 # For memory profile visualization
 ```go tool pprof -http=:8080 mem.prof```
 This opens a web interface on port 8080 where you can explore:
+- CPU and memory usage patterns
+- Hot spots and performance bottlenecks
+- Function call graphs
+
+## Recent Updates
+
+### ✨ **Latest Features**
+
+- **🚀 Smart Change Detection**: Only analyze projects with actual file changes (enabled by default)
+- **⚡ Simplified CLI**: Removed redundant `fossa` subcommand for cleaner usage
+- **✅ GitHub Commit Status**: Automatic commit status checks alongside issue creation
+- **🔧 Enhanced CI/CD**: Perfect integration with modern CI/CD pipelines
+
+### 📖 **Migration Guide**
+
+**Old Command Structure:**
+```bash
+fossa-nx fossa --all --github --github-token=TOKEN --github-org=org --github-repo=repo
+```
+
+**New Command Structure:**
+```bash
+fossa-nx --all --github --github-token=TOKEN --github-org=org --github-repo=repo
+```
+
+All existing functionality remains the same, just with a cleaner command structure!
+
+---
+
+**🎯 Ready to get started?** Use the new smart change detection for faster CI/CD:
+
+```bash
+fossa-nx --base=main --head=HEAD --concurrent=5 --github \
+  --github-token=$GITHUB_TOKEN --github-org=your-org --github-repo=your-repo
+```
