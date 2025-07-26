@@ -146,6 +146,7 @@ func main() {
 		allProjects     bool
 		includeUnmapped bool
 		projectName     string // Add specific project option
+		smartChanges    bool   // Enable smart change detection
 
 		// Email configuration
 		emailEnabled bool
@@ -378,7 +379,7 @@ Examples:
 
 			// Process projects with optimized worker pool
 			startTime = time.Now()
-			results := processProjectsOptimized(ctx, projects, maxConcurrent, verboseLogging, stats)
+			results := processProjectsOptimized(ctx, projects, maxConcurrent, verboseLogging, stats, base, head, allProjects, smartChanges)
 			duration := time.Since(startTime)
 
 			// Print summary
@@ -454,6 +455,7 @@ Examples:
 	rootCmd.Flags().BoolVarP(&allProjects, "all", "a", false, "Analyze all projects, not just affected ones")
 	rootCmd.Flags().BoolVar(&includeUnmapped, "include-unmapped", false, "Include projects not defined in configuration")
 	rootCmd.Flags().StringVarP(&projectName, "project", "p", "", "Analyze a specific project by name")
+	rootCmd.Flags().BoolVar(&smartChanges, "smart-changes", true, "Only analyze projects with file changes (default: true)")
 
 	// Email notification flags
 	rootCmd.Flags().BoolVar(&emailEnabled, "email", false, "Enable email notifications")
@@ -484,7 +486,7 @@ Examples:
 }
 
 // Updated to return results for notifications
-func processProjectsOptimized(ctx context.Context, projects []string, workers int, verbose bool, stats *Stats) []models.Result {
+func processProjectsOptimized(ctx context.Context, projects []string, workers int, verbose bool, stats *Stats, base, head string, allProjects, smartChanges bool) []models.Result {
 	projectCh := make(chan string, workers*2)
 	resultCh := make(chan models.Result, workers*2)
 	results := make([]models.Result, 0, len(projects))
@@ -495,7 +497,7 @@ func processProjectsOptimized(ctx context.Context, projects []string, workers in
 	// Spawn worker goroutines
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go optimizedWorker(ctx, projectCh, resultCh, &wg, verbose, i)
+		go optimizedWorker(ctx, projectCh, resultCh, &wg, verbose, i, base, head, allProjects, smartChanges)
 	}
 
 	// Start a goroutine to close resultCh when all workers are done
@@ -539,7 +541,7 @@ func processProjectsOptimized(ctx context.Context, projects []string, workers in
 	return results
 }
 
-func optimizedWorker(ctx context.Context, projectCh <-chan string, resultCh chan<- models.Result, wg *sync.WaitGroup, verbose bool, workerId int) {
+func optimizedWorker(ctx context.Context, projectCh <-chan string, resultCh chan<- models.Result, wg *sync.WaitGroup, verbose bool, workerId int, base, head string, allProjects, smartChanges bool) {
 	defer wg.Done()
 
 	for {
@@ -548,6 +550,33 @@ func optimizedWorker(ctx context.Context, projectCh <-chan string, resultCh chan
 			if !ok {
 				// Channel closed, worker can exit
 				return
+			}
+
+			// Smart change detection: check if project should be skipped
+			shouldSkip := false
+			if smartChanges {
+				var err error
+				shouldSkip, err = nx.ShouldSkipProject(project, base, head, allProjects)
+				if err != nil && verbose {
+					log.Printf("[Worker %d] Warning: Could not determine if %s should be skipped: %v", workerId, project, err)
+				}
+			}
+
+			if shouldSkip {
+				if verbose {
+					log.Printf("[Worker %d] Skipping %s - no file changes detected", workerId, project)
+				}
+				// Send a successful result with no issues to indicate skip
+				resultCh <- models.Result{
+					Project:         project,
+					Error:           nil,
+					Duration:        0,
+					EndTime:         time.Now(),
+					Issues:          []models.VulnerabilityIssue{},
+					FossaLink:       "",
+					DependencyCount: 0,
+				}
+				continue
 			}
 
 			if verbose {

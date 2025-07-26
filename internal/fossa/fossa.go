@@ -2,7 +2,6 @@ package fossa
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,12 +14,12 @@ import (
 
 // Global mutex for filesystem operations to prevent race conditions
 var (
-	fsLock             sync.Mutex
-	monorepoRootOnce   sync.Once
-	monorepoRootDir    string
-	monorepoRootErr    error
-	filteredEnvOnce    sync.Once
-	filteredEnvVars    []string
+	fsLock           sync.Mutex
+	monorepoRootOnce sync.Once
+	monorepoRootDir  string
+	monorepoRootErr  error
+	filteredEnvOnce  sync.Once
+	filteredEnvVars  []string
 )
 
 // getMonorepoRoot returns the root directory of the monorepo (cached)
@@ -38,7 +37,7 @@ func getFilteredEnv() []string {
 	filteredEnvOnce.Do(func() {
 		env := os.Environ()
 		filteredEnvVars = make([]string, 0, len(env))
-		
+
 		for _, envVar := range env {
 			if !strings.HasPrefix(envVar, "SSL_CERT_DIR=") {
 				filteredEnvVars = append(filteredEnvVars, envVar)
@@ -73,21 +72,21 @@ func RunAnalysis(projectName string) error {
 		return fmt.Errorf("failed to get monorepo root: %w", err)
 	}
 
-	// State tracking variables 
+	// State tracking variables
 	var (
-		packageJsonPath = filepath.Join(absProjectRoot, "package.json")
-		originalPackageJson []byte
-		packageJsonExists = false
-		nodeModulesPath = filepath.Join(absProjectRoot, "node_modules")
-		monorepoNodeModulesPath = filepath.Join(monorepoRoot, "node_modules") 
-		nodeModulesCreated = false
+		packageJsonPath         = filepath.Join(absProjectRoot, "package.json")
+		originalPackageJson     []byte
+		packageJsonExists       = false
+		nodeModulesPath         = filepath.Join(absProjectRoot, "node_modules")
+		monorepoNodeModulesPath = filepath.Join(monorepoRoot, "node_modules")
+		nodeModulesCreated      = false
 	)
 
 	// Backup package.json if it exists
 	fsLock.Lock()
 	if _, err := os.Stat(packageJsonPath); err == nil {
 		packageJsonExists = true
-		originalPackageJson, err = ioutil.ReadFile(packageJsonPath)
+		originalPackageJson, err = os.ReadFile(packageJsonPath)
 		if err != nil {
 			fsLock.Unlock()
 			return fmt.Errorf("failed to read package.json: %w", err)
@@ -99,7 +98,7 @@ func RunAnalysis(projectName string) error {
 	fsLock.Lock()
 	_, err = nx.CreateTemporaryPackageJson(projectName, absProjectRoot)
 	fsLock.Unlock()
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to create temporary package.json: %w", err)
 	}
@@ -127,7 +126,7 @@ func RunAnalysis(projectName string) error {
 	if err == nil {
 		gitCommitHash = strings.TrimSpace(string(gitCommitOutput))
 	}
-	
+
 	gitBranchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	gitBranchOutput, err := gitBranchCmd.Output()
 	gitBranchName := ""
@@ -140,7 +139,7 @@ func RunAnalysis(projectName string) error {
 		fsLock.Lock()
 		// Restore original package.json
 		if packageJsonExists {
-			ioutil.WriteFile(packageJsonPath, originalPackageJson, 0644)
+			os.WriteFile(packageJsonPath, originalPackageJson, 0644)
 		} else {
 			os.Remove(packageJsonPath)
 		}
@@ -162,18 +161,18 @@ func RunAnalysis(projectName string) error {
 		"-T", teamValue,
 		"-p", fossaProject,
 	}
-	
+
 	// Only add branch and revision if available
 	if gitBranchName != "" {
 		analyzeArgs = append(analyzeArgs, "-b", gitBranchName)
 	}
-	
+
 	if gitCommitHash != "" {
 		analyzeArgs = append(analyzeArgs, "-r", gitCommitHash)
 	}
-	
+
 	analyzeArgs = append(analyzeArgs, "--policy", "Website/Hosted Service Use")
-	
+
 	analyzeCmd := exec.Command("fossa", analyzeArgs...)
 	analyzeCmd.Dir = absProjectRoot
 	analyzeCmd.Env = filteredEnv
@@ -190,11 +189,11 @@ func RunAnalysis(projectName string) error {
 		"-e", fossaEndpoint,
 		"-p", fossaProject,
 	}
-	
+
 	if gitCommitHash != "" {
 		testArgs = append(testArgs, "-r", gitCommitHash)
 	}
-	
+
 	testCmd := exec.Command("fossa", testArgs...)
 	testCmd.Dir = absProjectRoot
 	testCmd.Env = filteredEnv
