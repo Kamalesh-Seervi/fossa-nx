@@ -127,24 +127,48 @@ func determineProjectRoot(projectName string) (string, error) {
 	// Use NX CLI to directly get project info (most reliable)
 	cmd := exec.Command("yarn", "nx", "show", "project", projectName, "--json")
 	output, err := cmd.CombinedOutput()
+
 	if err == nil {
-		var projectInfo map[string]interface{}
-		if err := json.Unmarshal(output, &projectInfo); err == nil {
-			if root, ok := projectInfo["root"].(string); ok && root != "" {
-				return root, nil
+		// Extract JSON from yarn output - look for lines that start with '{'
+		outputStr := string(output)
+		lines := strings.Split(outputStr, "\n")
+
+		var jsonStr string
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "{") {
+				jsonStr = line
+				break
+			}
+		}
+
+		if jsonStr != "" {
+			var projectInfo map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &projectInfo); err == nil {
+				if root, ok := projectInfo["root"].(string); ok && root != "" {
+					return root, nil
+				}
 			}
 		}
 	}
 
 	// Fallback: try common patterns for nx project directories
+	commonPatterns := []string{
+		// Try exact project name first (for packages/@scope/name structure)
+		filepath.Join("packages", projectName),
+		filepath.Join("apps", projectName),
+		filepath.Join("libs", projectName),
+	}
+
+	// Also try sanitized versions
 	sanitizedName := strings.ReplaceAll(projectName, "@", "")
 	sanitizedName = strings.ReplaceAll(sanitizedName, "/", "-")
 
-	commonPatterns := []string{
+	commonPatterns = append(commonPatterns,
 		filepath.Join("apps", sanitizedName),
 		filepath.Join("libs", sanitizedName),
 		filepath.Join("packages", sanitizedName),
-	}
+	)
 
 	for _, pattern := range commonPatterns {
 		if _, err := os.Stat(pattern); err == nil {
