@@ -158,11 +158,12 @@ func main() {
 		toEmails     string
 
 		// GitHub configuration
-		githubEnabled bool
-		githubToken   string
-		githubOrg     string
-		githubRepo    string
-		githubApiUrl  string
+		githubEnabled      bool
+		githubCreateIssues bool
+		githubToken        string
+		githubOrg          string
+		githubRepo         string
+		githubApiUrl       string
 	)
 
 	// Check for version flag
@@ -235,6 +236,7 @@ Examples:
 				Repository:   githubRepo,
 				ApiUrl:       githubApiUrl,
 				Enabled:      githubEnabled && githubToken != "",
+				CreateIssues: githubCreateIssues,
 			}
 
 			var projects []string
@@ -467,7 +469,8 @@ Examples:
 	rootCmd.Flags().StringVar(&toEmails, "to-email", "", "Recipient email addresses (comma-separated)")
 
 	// GitHub integration flags
-	rootCmd.Flags().BoolVar(&githubEnabled, "github", false, "Enable GitHub issue creation")
+	rootCmd.Flags().BoolVar(&githubEnabled, "github", false, "Enable GitHub integration (commit status)")
+	rootCmd.Flags().BoolVar(&githubCreateIssues, "github-issues", false, "Enable GitHub vulnerability issue creation")
 	rootCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub API token")
 	rootCmd.Flags().StringVar(&githubOrg, "github-org", "", "GitHub organization")
 	rootCmd.Flags().StringVar(&githubRepo, "github-repo", "", "GitHub repository")
