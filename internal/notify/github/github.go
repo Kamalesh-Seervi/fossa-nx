@@ -230,10 +230,23 @@ func CreateCommitStatus(results []models.Result, config models.GitHubConfig, ver
 	escapedProjectName = strings.ReplaceAll(escapedProjectName, " ", "-")
 	escapedProjectName = strings.ReplaceAll(escapedProjectName, "/", "-")
 
+	// Truncate context to fit GitHub's 255 character limit
+	context := fmt.Sprintf("ci/fossa-%s", escapedProjectName)
+	if len(context) > 255 {
+		// If too long, use a generic context or truncate
+		if len(projectNames) == 1 {
+			context = fmt.Sprintf("ci/fossa-%s", projectNames[0])
+			if len(context) > 255 {
+				context = "ci/fossa-scan"
+			}
+		} else {
+			context = fmt.Sprintf("ci/fossa-%d-projects", len(projectNames))
+		}
+	}
+
 	// Determine status state and description
 	var state string
 	var description string
-	context := fmt.Sprintf("ci/fossa-%s", escapedProjectName)
 
 	if failedScans > 0 {
 		state = "failure"
@@ -243,7 +256,20 @@ func CreateCommitStatus(results []models.Result, config models.GitHubConfig, ver
 		description = fmt.Sprintf("FOSSA found %d vulnerabilities", totalVulnerabilities)
 	} else {
 		state = "success"
-		description = fmt.Sprintf("FOSSA scan passed for project %s", escapedProjectName)
+		if len(projectNames) == 1 {
+			projectName := projectNames[0]
+			if len(projectName) > 100 { // Leave room for prefix text
+				projectName = projectName[:100] + "..."
+			}
+			description = fmt.Sprintf("FOSSA scan passed for %s", projectName)
+		} else {
+			description = fmt.Sprintf("FOSSA scan passed for %d projects", len(projectNames))
+		}
+	}
+
+	// Ensure description doesn't exceed GitHub's 140 character limit
+	if len(description) > 140 {
+		description = description[:137] + "..."
 	}
 
 	// Create status request
